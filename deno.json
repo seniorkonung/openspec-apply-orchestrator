@@ -1,0 +1,16 @@
+{
+  "name": "@seniorkonung/openspec-apply-orchestrator",
+  "version": "0.1.0",
+  "exports": "./src/mod.ts",
+  "license": "MIT",
+  "imports": {
+    "effect": "npm:effect@rc"
+  },
+  "publish": {
+    "include": [
+      "src/",
+      "README.md",
+      "LICENSE"
+    ]
+  }
+}

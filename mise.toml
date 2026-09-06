@@ -1,1 +1,15 @@
+[tools]
+deno = "2.9"
+"github:bug-ops/mcpls" = "latest"
+"github:microsoft/apm" = "latest"
+lefthook = "2"
 
+[tasks]
+prepare = "lefthook install"
+fmt = "deno fmt deno.json src/"
+check = [
+    "deno fmt --check deno.json src/",
+    "deno check src/mod.ts",
+    "deno test --ignore=apm_modules --permit-no-files"
+]
+"publish:dry-run" = "deno publish --dry-run"
