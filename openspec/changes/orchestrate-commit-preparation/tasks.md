@@ -30,7 +30,7 @@
   - **Files likely touched:** Новые `internal/paseo/directory.go`, `internal/paseo/directory_test.go`; существующие `internal/orchestrator/session.go`, `internal/orchestrator/session_test.go`.
   - **Estimated scope:** M.
 
-- [ ] 1.4 Создавать workspace и собственную сессию и подтверждать её архивирование через CLI
+- [x] 1.4 Создавать workspace и собственную сессию и подтверждать её архивирование через CLI
   - **Acceptance criteria:**
     - При необходимости нового поручения отсутствующий workspace создаётся через `paseo workspace create --json` со служебным именем и каноническим cwd; проверенный полный ID используется во всех последующих командах и в метке сессии.
     - Один `paseo run --background --json` передаёт полный ID workspace, настройки, встроенный первоначальный промпт и метки `oa.owner`, `oa.version`, `oa.change`, `oa.kind`, `oa.workspace`; неопределённый исход не ставит повтор в очередь и не вводит резервирование.
