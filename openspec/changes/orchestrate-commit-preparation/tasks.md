@@ -70,7 +70,7 @@
   - **Files likely touched:** Новые `internal/paseo/recovery_integration_test.go`, `internal/orchestrator/recovery_integration_test.go`, `internal/testpaseo/daemon.go`, `internal/testpaseo/provider.go`, `docs/development/paseo-compatibility.md`.
   - **Estimated scope:** M.
 
-- [ ] 1.8 Подтвердить готовность сопровождения видимой сессии к подключению Git
+- [x] 1.8 Подтвердить готовность сопровождения видимой сессии к подключению Git
   - **Acceptance criteria:**
     - Условие `Ready to advance` Phase 1 подтверждено результатами 1.7: одна команда переносит промпт, полный ID workspace и метки, видимая активная сессия продолжается после перезапуска, неоднозначность обнаруживается, ручные сессии не затрагиваются, а неподдерживаемая среда отклоняется до мутаций.
     - Пройдены тесты, статические проверки и проверка зависимостей; отсутствуют прямой протокол Paseo, WebSocket-зависимость, собственные записи прогресса, резервирование будущего агента и реализация возможностей последующих фаз.
