@@ -40,7 +40,7 @@
   - **Files likely touched:** Новые `internal/paseo/mutations.go`, `internal/paseo/mutations_test.go`; `internal/paseo/workspace.go`, `internal/paseo/session.go`, `internal/orchestrator/ownership.go`.
   - **Estimated scope:** M.
 
-- [ ] 1.5 Исключать второго локального владельца выбранного change без файлов состояния
+- [x] 1.5 Исключать второго локального владельца выбранного change без файлов состояния
   - **Acceptance criteria:**
     - Реализован неблокирующий advisory lock открытого существующего корня выбранного change на Linux; канонически эквивалентные пути к тому же change не обходят ограничение, а разные change не используют общий lock только из-за одного Git common dir.
     - Не-Linux среда, файловая система вне явного списка поддерживаемых локальных типов и невозможность установить lock возвращают объясняющую ошибку до изменяющих команд Paseo; второй процесс того же change получает отдельное объяснение занятости.
