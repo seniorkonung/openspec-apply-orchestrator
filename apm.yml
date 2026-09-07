@@ -1,0 +1,48 @@
+name: openspec-apply-orchestrator
+version: 0.0.1
+targets:
+  - codex
+  - agent-skills
+dependencies:
+  apm:
+    - git: seniorkonung/agent-skills
+      ref: main
+      skills:
+        - code-review-and-quality
+        - idea-refine
+        - incremental-implementation
+        - observability-and-instrumentation
+        - planning-and-task-breakdown
+        - security-and-hardening
+        - shipping-and-launch
+        - test-driven-development
+        - discussion
+        - openspec-review-change
+        - phased-planning
+        - implementation-decision-review
+        - openspec-review-implementation
+        - change-summary
+        - openspec-task-deliberation
+        - openspec-gherkin-authoring
+        - c4-diagrams
+        - domain-modeling
+    - git: fission-ai/openspec
+      ref: v1.12.0
+      skills:
+        - openspec-update-change
+        - openspec-verify-change
+        - openspec-sync-specs
+        - openspec-propose
+        - openspec-new-change
+        - openspec-explore
+        - openspec-continue-change
+        - openspec-archive-change
+        - openspec-apply-change
+  mcp:
+    - name: golang
+      registry: false
+      transport: stdio
+      command: gopls
+      args: ["mcp"]
+includes: auto
+scripts: {}
