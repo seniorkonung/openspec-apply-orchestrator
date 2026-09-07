@@ -112,6 +112,58 @@ func TestРеальныйPaseoСохраняетВидимуюСессиюПос
 	)
 }
 
+func TestНеопределённыйRunНеПовторяетсяАНеподдерживаемаяСредаНеМутируетPaseo(t *testing.T) {
+	harness := testpaseo.Start(t)
+	harness.SetBehavior(t, testpaseo.BehaviorWorking)
+	harness.InterceptRunOutput(t)
+
+	unknown := harness.RunDriver(t, testpaseo.DriverRequest{
+		Operation: testpaseo.DriverStart,
+		Change:    "integration-unknown-run",
+		Prompt:    integrationPrompt,
+	})
+	if unknown.ErrorKind != testpaseo.DriverRunOutcomeUnknown {
+		t.Fatalf("потерянный ответ run не распознан как неопределённый исход: %#v", unknown)
+	}
+	if count := harness.InterceptedRunCount(t); count != 1 {
+		t.Fatalf("неопределённый run выполнен %d раз, ожидался один", count)
+	}
+
+	recovered := harness.RunDriver(t, testpaseo.DriverRequest{
+		Operation: testpaseo.DriverObserve,
+		Change:    "integration-unknown-run",
+		Prompt:    integrationPrompt,
+	})
+	if recovered.Observation != testpaseo.ObservationWorking || recovered.SessionID == "" {
+		t.Fatalf("новый процесс не восстановил сессию после потерянного ответа: %#v", recovered)
+	}
+	if prompts := harness.Prompts(t); len(prompts) != 1 || prompts[0] != integrationPrompt {
+		t.Fatalf("неопределённый исход повторно отправил поручение: %#v", prompts)
+	}
+	mutationsBeforeUnsupported := harness.InterceptedMutationCount(t)
+
+	unsupported := harness.RunDriver(t, testpaseo.DriverRequest{
+		Operation:   testpaseo.DriverStart,
+		Change:      "integration-unsupported-filesystem",
+		Prompt:      integrationPrompt,
+		WorkingRoot: "/proc",
+		ChangeRoot:  "/proc",
+	})
+	if unsupported.ErrorKind != testpaseo.DriverUnsupportedFilesystem {
+		t.Fatalf("неподдерживаемая среда не остановлена до Paseo: %#v", unsupported)
+	}
+	if count := harness.InterceptedRunCount(t); count != 1 {
+		t.Fatalf("неподдерживаемая среда вызвала изменяющую команду Paseo: run=%d", count)
+	}
+	if count := harness.InterceptedMutationCount(t); count != mutationsBeforeUnsupported {
+		t.Fatalf(
+			"неподдерживаемая среда вызвала изменяющую команду Paseo: было %d, стало %d",
+			mutationsBeforeUnsupported, count,
+		)
+	}
+	t.Logf("неопределённый run выполнен один раз; восстановлена сессия %s", recovered.SessionID)
+}
+
 func waitForIntegrationSession(
 	t *testing.T,
 	ctx context.Context,

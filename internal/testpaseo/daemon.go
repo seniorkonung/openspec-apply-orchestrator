@@ -32,14 +32,83 @@ type CLIResult struct {
 	Stderr []byte
 }
 
+type Behavior string
+
+const (
+	BehaviorWorking    Behavior = "working"
+	BehaviorFinish     Behavior = "finish"
+	BehaviorPermission Behavior = "permission"
+	BehaviorError      Behavior = "error"
+)
+
+type DriverOperation string
+
+const (
+	DriverStart     DriverOperation = "start"
+	DriverObserve   DriverOperation = "observe"
+	DriverReconcile DriverOperation = "reconcile"
+)
+
+type DriverObservation string
+
+const (
+	ObservationNoWorkspace   DriverObservation = "no_workspace"
+	ObservationNoSession     DriverObservation = "no_session"
+	ObservationWorking       DriverObservation = "working"
+	ObservationTurnFinished  DriverObservation = "turn_finished"
+	ObservationPermission    DriverObservation = "permission"
+	ObservationAgentError    DriverObservation = "agent_error"
+	ObservationClosed        DriverObservation = "closed"
+	ObservationAmbiguous     DriverObservation = "ambiguous"
+	ObservationNotApplicable DriverObservation = "not_applicable"
+)
+
+type DriverErrorKind string
+
+const (
+	DriverCanceled              DriverErrorKind = "canceled"
+	DriverUnsupportedFilesystem DriverErrorKind = "unsupported_filesystem"
+	DriverRunOutcomeUnknown     DriverErrorKind = "run_outcome_unknown"
+	DriverOtherError            DriverErrorKind = "other"
+)
+
+type DriverRequest struct {
+	Operation   DriverOperation
+	Change      string
+	Prompt      string
+	WorkingRoot string
+	ChangeRoot  string
+}
+
+type DriverResult struct {
+	Operation   DriverOperation   `json:"operation"`
+	Version     string            `json:"version,omitempty"`
+	ServerID    string            `json:"serverId,omitempty"`
+	WorkspaceID string            `json:"workspaceId,omitempty"`
+	SessionID   string            `json:"sessionId,omitempty"`
+	Observation DriverObservation `json:"observation"`
+	Error       string            `json:"error,omitempty"`
+	ErrorKind   DriverErrorKind   `json:"errorKind,omitempty"`
+}
+
+type DriverProcess struct {
+	Command *exec.Cmd
+	stdout  bytes.Buffer
+	stderr  bytes.Buffer
+}
+
 type Harness struct {
 	cliPath     string
 	home        string
 	listen      string
 	host        string
 	workspace   string
+	changeRoot  string
 	controlPath string
 	recordPath  string
+	driverPath  string
+	proxyPath   string
+	mutationLog string
 }
 
 func Start(t *testing.T) *Harness {
@@ -68,22 +137,27 @@ func Start(t *testing.T) *Harness {
 		home:        home,
 		listen:      filepath.Join(home, "daemon.sock"),
 		workspace:   filepath.Join(home, "workspace"),
+		changeRoot:  filepath.Join(home, "change"),
 		controlPath: filepath.Join(home, "provider.control"),
 		recordPath:  filepath.Join(home, "provider-prompts.jsonl"),
+		driverPath:  filepath.Join(home, "reconcile-driver"),
+		proxyPath:   filepath.Join(home, "proxy-bin", "paseo"),
+		mutationLog: filepath.Join(home, "intercepted-mutations.log"),
 	}
 	harness.host = "unix://" + harness.listen
-	if err := os.Mkdir(harness.workspace, 0o700); err != nil {
-		t.Fatalf("создать рабочий каталог стенда: %v", err)
+	for _, directory := range []string{harness.workspace, harness.changeRoot} {
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatalf("создать каталог стенда: %v", err)
+		}
 	}
 	providerPath := filepath.Join(home, "test-provider")
-	build := exec.Command("go", "build", "-tags=paseo_integration", "-o", providerPath, "./internal/testpaseo/cmd/provider")
-	build.Dir = root
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("собрать управляемый тестовый провайдер: %v\n%s", err, output)
+	buildTestBinary(t, root, providerPath, "./internal/testpaseo/cmd/provider")
+	buildTestBinary(t, root, harness.driverPath, "./internal/testpaseo/cmd/reconcile")
+	if err := os.Mkdir(filepath.Dir(harness.proxyPath), 0o700); err != nil {
+		t.Fatalf("создать каталог прокси Paseo: %v", err)
 	}
-	if err := os.WriteFile(harness.controlPath, []byte("finish\n"), 0o600); err != nil {
-		t.Fatalf("задать поведение тестового провайдера: %v", err)
-	}
+	buildTestBinary(t, root, harness.proxyPath, "./internal/testpaseo/cmd/paseoproxy")
+	harness.SetBehavior(t, BehaviorFinish)
 	if err := harness.writeConfig(providerPath); err != nil {
 		t.Fatalf("записать изолированную конфигурацию Paseo: %v", err)
 	}
@@ -105,6 +179,109 @@ func Start(t *testing.T) *Harness {
 
 func (harness *Harness) Workspace() string {
 	return harness.workspace
+}
+
+func (harness *Harness) SetBehavior(t *testing.T, behavior Behavior) {
+	t.Helper()
+	switch behavior {
+	case BehaviorWorking, BehaviorFinish, BehaviorPermission, BehaviorError:
+	default:
+		t.Fatalf("неизвестное поведение тестового провайдера: %q", behavior)
+	}
+	temporary := harness.controlPath + ".new"
+	if err := os.WriteFile(temporary, []byte(behavior+"\n"), 0o600); err != nil {
+		t.Fatalf("записать поведение тестового провайдера: %v", err)
+	}
+	if err := os.Rename(temporary, harness.controlPath); err != nil {
+		t.Fatalf("применить поведение тестового провайдера: %v", err)
+	}
+}
+
+func (harness *Harness) InterceptRunOutput(t *testing.T) {
+	t.Helper()
+	if err := os.WriteFile(harness.mutationLog, nil, 0o600); err != nil {
+		t.Fatalf("подготовить журнал изменяющих команд: %v", err)
+	}
+	t.Setenv("OA_TESTPASEO_REAL_CLI", harness.cliPath)
+	t.Setenv("OA_TESTPASEO_MUTATION_LOG", harness.mutationLog)
+	t.Setenv("PATH", filepath.Dir(harness.proxyPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func (harness *Harness) InterceptedRunCount(t *testing.T) int {
+	t.Helper()
+	count := 0
+	for _, command := range harness.interceptedMutations(t) {
+		if command == "run" {
+			count++
+		}
+	}
+	return count
+}
+
+func (harness *Harness) InterceptedMutationCount(t *testing.T) int {
+	t.Helper()
+	return len(harness.interceptedMutations(t))
+}
+
+func (harness *Harness) interceptedMutations(t *testing.T) []string {
+	t.Helper()
+	content, err := os.ReadFile(harness.mutationLog)
+	if err != nil {
+		t.Fatalf("прочитать журнал изменяющих команд: %v", err)
+	}
+	mutations := make([]string, 0)
+	for _, line := range bytes.Split(content, []byte{'\n'}) {
+		if command := strings.TrimSpace(string(line)); command != "" {
+			mutations = append(mutations, command)
+		}
+	}
+	return mutations
+}
+
+func (harness *Harness) StartDriver(t *testing.T, request DriverRequest) *DriverProcess {
+	t.Helper()
+	request = harness.completeDriverRequest(t, request)
+	process := &DriverProcess{}
+	process.Command = exec.Command(harness.driverPath, string(request.Operation))
+	process.Command.Dir = request.WorkingRoot
+	process.Command.Env = append(
+		harness.environment(),
+		"OA_TESTPASEO_CHANGE="+request.Change,
+		"OA_TESTPASEO_PROMPT="+request.Prompt,
+		"OA_TESTPASEO_WORKING_ROOT="+request.WorkingRoot,
+		"OA_TESTPASEO_CHANGE_ROOT="+request.ChangeRoot,
+	)
+	process.Command.Stdout = &process.stdout
+	process.Command.Stderr = &process.stderr
+	if err := process.Command.Start(); err != nil {
+		t.Fatalf("запустить отдельный процесс сопровождения: %v", err)
+	}
+	return process
+}
+
+func (harness *Harness) RunDriver(t *testing.T, request DriverRequest) DriverResult {
+	t.Helper()
+	return harness.StartDriver(t, request).Wait(t)
+}
+
+func (process *DriverProcess) Wait(t *testing.T) DriverResult {
+	t.Helper()
+	if err := process.Command.Wait(); err != nil {
+		t.Fatalf(
+			"процесс сопровождения завершился аварийно: %v\nstdout:\n%s\nstderr:\n%s",
+			err, process.stdout.Bytes(), process.stderr.Bytes(),
+		)
+	}
+	var result DriverResult
+	decoder := json.NewDecoder(bytes.NewReader(process.stdout.Bytes()))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		t.Fatalf(
+			"прочитать результат процесса сопровождения: %v\nstdout:\n%s\nstderr:\n%s",
+			err, process.stdout.Bytes(), process.stderr.Bytes(),
+		)
+	}
+	return result
 }
 
 func (harness *Harness) RunCLI(t *testing.T, args ...string) CLIResult {
@@ -264,6 +441,25 @@ func (harness *Harness) environment() []string {
 	)
 }
 
+func (harness *Harness) completeDriverRequest(t *testing.T, request DriverRequest) DriverRequest {
+	t.Helper()
+	switch request.Operation {
+	case DriverStart, DriverObserve, DriverReconcile:
+	default:
+		t.Fatalf("неизвестная операция процесса сопровождения: %q", request.Operation)
+	}
+	if strings.TrimSpace(request.Change) == "" || strings.TrimSpace(request.Prompt) == "" {
+		t.Fatal("процессу сопровождения нужны change и поручение")
+	}
+	if request.WorkingRoot == "" {
+		request.WorkingRoot = harness.workspace
+	}
+	if request.ChangeRoot == "" {
+		request.ChangeRoot = harness.changeRoot
+	}
+	return request
+}
+
 func setProcessEnvironment(t *testing.T, harness *Harness) {
 	t.Helper()
 	t.Setenv("PASEO_HOME", harness.home)
@@ -295,4 +491,13 @@ func moduleRoot(t *testing.T) string {
 		t.Fatal("не определить путь исходного файла стенда")
 	}
 	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", ".."))
+}
+
+func buildTestBinary(t *testing.T, root, outputPath, packagePath string) {
+	t.Helper()
+	build := exec.Command("go", "build", "-tags=paseo_integration", "-o", outputPath, packagePath)
+	build.Dir = root
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("собрать %s: %v\n%s", packagePath, err, output)
+	}
 }
