@@ -73,6 +73,9 @@ func (runner *runner) run(ctx context.Context, command command) ([]byte, error) 
 
 	stdout := newCappedBuffer(runner.stdoutLimit)
 	stderr := newCappedBuffer(runner.stderrLimit)
+	// CommandContext передаёт аргументы без shell и отменяет только дочерний процесс;
+	// WaitDelay ограничивает ожидание унаследованных каналов вывода.
+	// Источник: https://pkg.go.dev/os/exec#CommandContext
 	cmd := exec.CommandContext(commandCtx, runner.executable, command.args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

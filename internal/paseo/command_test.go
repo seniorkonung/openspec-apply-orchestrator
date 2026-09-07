@@ -156,10 +156,16 @@ func newFakeRunner(t *testing.T, config runnerConfig) *runner {
 	executable := filepath.Join(dir, "paseo")
 	script := `#!/bin/sh
 if [ -n "$FAKE_PASEO_RECORD" ]; then
-  printf '%s\n' "$@" > "$FAKE_PASEO_RECORD"
+  printf '%s\n' "$@" >> "$FAKE_PASEO_RECORD"
 fi
-if [ -n "$FAKE_PASEO_STDOUT" ]; then
-  printf '%s' "$FAKE_PASEO_STDOUT"
+stdout="$FAKE_PASEO_STDOUT"
+if [ "$1" = "--version" ]; then
+  stdout="${FAKE_PASEO_VERSION-$stdout}"
+elif [ "$1" = "status" ]; then
+  stdout="${FAKE_PASEO_STATUS-$stdout}"
+fi
+if [ -n "$stdout" ]; then
+  printf '%s' "$stdout"
 fi
 if [ -n "$FAKE_PASEO_STDERR" ]; then
   printf '%s' "$FAKE_PASEO_STDERR" >&2
