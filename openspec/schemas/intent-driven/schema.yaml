@@ -1,0 +1,417 @@
+name: intent-driven
+version: 5
+description: >-
+  Intent-driven OpenSpec workflow - proposal -> Gherkin-style specs -> design ->
+  adr -> plan -> phase-by-phase tasks
+artifacts:
+  - id: proposal
+    generates: proposal.md
+    description: Initial proposal document outlining the change
+    template: proposal.md
+    instruction: >
+      Create the proposal document that establishes WHY this change is needed.
+
+
+      Sections:
+
+      - **Why**: 1-2 sentences on the problem or opportunity. What problem does
+      this solve? Why now?
+
+      - **What Changes**: Bullet list of changes. Be specific about new
+      capabilities, modifications, or removals. Mark breaking changes with
+      **BREAKING**.
+
+      - **Capabilities**: Identify which behaviour specs will be created or modified:
+        - **New Capabilities**: List capabilities being introduced. Each becomes a new `specs/<name>/spec.md`. Use kebab-case names (e.g., `user-auth`, `data-export`).
+        - **Modified Capabilities**: List existing capabilities whose behaviour is changing. Only include if spec-level behaviour changes, not just implementation details. Each needs an OpenSpec Markdown delta file at `specs/<name>/spec.md`. Check `openspec/specs/` for existing spec names. Leave empty if no behaviour changes.
+      - **Impact**: Affected code, APIs, dependencies, or systems.
+
+
+      IMPORTANT: The Capabilities section is critical. It creates the contract
+      between proposal and specs phases. Research existing specs before filling
+      this in. Each capability listed here will need a corresponding spec file.
+
+
+      Durable architectural decisions worth carrying across changes are
+      distilled into ADR files at <repo>/docs/adr/ by a later step after design.
+
+
+      Keep it concise (1-2 pages). Focus on the "why" not the "how" -
+      implementation details belong in design.md.
+
+
+      This is the foundation - specs, design, adr, and tasks all build on this.
+    requires: []
+  - id: specs
+    generates: specs/**/*.md
+    description: Detailed specifications for the change
+    template: spec.md
+    instruction: >
+      Create specification files that define WHAT the system should do.
+
+
+      Create one spec file per capability listed in the proposal's Capabilities
+      section.
+
+      - New capabilities: use the exact kebab-case name from the proposal
+      (specs/<capability>/spec.md).
+
+      - Modified capabilities: use the existing spec folder name from
+      openspec/specs/<capability>/ when creating the delta spec at
+      specs/<capability>/spec.md.
+
+
+      Delta operations (use ## headers):
+
+      - **ADDED Requirements**: New capabilities
+
+      - **MODIFIED Requirements**: Changed behavior - MUST include full updated
+      content
+
+      - **REMOVED Requirements**: Deprecated features - MUST include **Reason**
+      and **Migration**
+
+      - **RENAMED Requirements**: Name changes only - use FROM:/TO: format
+
+
+      Format requirements:
+
+      - Each requirement: `### Requirement: <name>` followed by description
+
+      - Use SHALL/MUST for normative requirements (avoid should/may)
+
+      - Each scenario: `#### Scenario: <name>` with WHEN/THEN format
+
+      - **CRITICAL**: Scenarios MUST use exactly 4 hashtags (`####`). Using 3
+      hashtags or bullets will fail silently.
+
+      - Every requirement MUST have at least one scenario.
+
+
+      MODIFIED requirements workflow:
+
+      1. Locate the existing requirement in openspec/specs/<capability>/spec.md
+
+      2. Copy the ENTIRE requirement block (from `### Requirement:` through all
+      scenarios)
+
+      3. Paste under `## MODIFIED Requirements` and edit to reflect new behavior
+
+      4. Ensure header text matches exactly (whitespace-insensitive)
+
+
+      Common pitfall: Using MODIFIED with partial content loses detail at
+      archive time.
+
+      If adding new concerns without changing existing behavior, use ADDED
+      instead.
+
+
+      Example:
+
+      ```
+
+      ## ADDED Requirements
+
+
+      ### Requirement: User can export data
+
+      The system SHALL allow users to export their data in CSV format.
+
+
+      #### Scenario: Successful export
+
+      - **WHEN** user clicks "Export" button
+
+      - **THEN** system downloads a CSV file with all user data
+
+
+      ## REMOVED Requirements
+
+
+      ### Requirement: Legacy export
+
+      **Reason**: Replaced by new export system
+
+      **Migration**: Use new export endpoint at /api/v2/export
+
+      ```
+
+
+      Specs should be testable - each scenario is a potential test case.
+    requires:
+      - proposal
+  - id: design
+    generates: design.md
+    description: Technical design document with implementation details
+    template: design.md
+    instruction: >
+      Create the design document that explains HOW to implement the change.
+
+
+      When to include design.md (create only if any apply):
+
+      - Cross-cutting change (multiple services/modules) or new architectural
+      pattern
+
+      - New external dependency or significant data model changes
+
+      - Security, performance, or migration complexity
+
+      - Ambiguity that benefits from technical decisions before coding
+
+
+      Sections:
+
+      - **Context**: Background, current state, constraints, stakeholders
+
+      - **Goals / Non-Goals**: What this design achieves and explicitly excludes
+
+      - **Decisions**: Key technical choices with rationale (why X over Y?).
+      Include alternatives considered for each decision.
+
+      - **Risks / Trade-offs**: Known limitations, things that could go wrong.
+      Format: [Risk] -> Mitigation
+
+      - **Migration Plan**: Steps to deploy, rollback strategy (if applicable)
+
+      - **Open Questions**: Outstanding decisions or unknowns to resolve.
+
+
+      Focus on architecture and approach, not line-by-line implementation.
+
+      Reference the proposal for motivation and specs for requirements.
+
+
+      Good design docs explain the "why" behind technical decisions.
+    requires:
+      - proposal
+      - specs
+  - id: adr
+    generates: adr.md
+    description: Per-change ADR review manifest and durable decision handoff
+    template: adr.md
+    instruction: >
+      Complete ADR review for this change. Once the review is coherent with
+      design.md, write a concise manifest at openspec/changes/<change>/adr.md
+      using the template. Repository-level decisions live under
+      <repo>/docs/adr/.
+
+
+      ADR lifecycle:
+
+
+      ADRs owned by an active change remain proposed and editable until
+      archival. Accepted ADRs are immutable; revisiting one requires a new
+      proposed ADR with Supersedes. The manifest's completed status means that
+      ADR review and design reconciliation are complete.
+
+
+      Process:
+
+      1. Read <repo>/docs/adr/README.md first as the ADR navigation index. Use
+      it to identify decisions potentially applicable to this change, then read
+      those ADRs in full. Treat accepted ADRs as project-wide constraints,
+      following accepted Supersedes links. Treat relevant proposed ADRs from
+      other active changes as mutable coordination context. Use Originating
+      change and this change's existing manifest, if present, to find its owned
+      ADRs. Note the highest ADR sequence number.
+
+      2. Re-read design.md. Record a decision as an ADR only when it meets ALL
+      of these:
+
+      - Establish a long-term architectural commitment (pattern, technology,
+      boundary, contract) - not a tactical implementation detail.
+
+      - Will affect future changes beyond this one.
+
+      - Either aren't already captured by an applicable ADR, OR intentionally
+      revise one.
+
+      3. Revise this change's proposed ADRs in place. For a new decision or a
+      replacement of an accepted ADR, create the next
+      <repo>/docs/adr/NNNN-kebab-title.md. Include title, Status: proposed, Date,
+      Originating change: <change-name>, an optional separate Supersedes field,
+      and MADR-short sections: Context, Decision, and Consequences. Explain any
+      replacement in Context.
+
+      4. Reconcile the resulting decisions with design.md. If contradictions or
+      omissions remain, report them and return to the design step before
+      completing the manifest or proceeding to plan.
+
+      5. Once coherent, complete the manifest with applicable ADRs and every ADR
+      owned by this change. Link ADRs without duplicating their contents. If no
+      decision qualifies and the change owns no ADRs, state that no ADR was
+      created.
+    requires:
+      - design
+  - id: plan
+    generates: plan.md
+    description: Mutable high-level implementation direction
+    template: plan.md
+    instruction: >
+      Create the phased implementation plan that forms the stable planning layer
+      between the approved requirements and just-in-time task generation:
+
+
+      requirements -> phased plan -> selected phase -> detailed tasks
+
+
+      The unfinished part of the plan is a locally revisable forecast, not a
+      progress tracker or an implementation checklist. It must give a later
+      task-planning session enough direction to decompose one selected phase
+      without committing future phases to detailed work that may become stale.
+
+
+      Follow the supplied template.
+
+
+      Sections:
+
+      - **Direction**: Summarize the plan-wide delivery strategy, sequencing
+        logic, and invariants that every phase must preserve. It should remain
+        valid when unfinished phases are revised.
+
+      - **Plan Constraints**: State only constraints that shape the plan as a
+        whole. Omit this section when none are needed.
+
+      - **Phase N**: Describe the fewest meaningful, strictly ordered,
+        outcome-oriented state transitions needed to deliver the change. For
+        every phase, state its objective, outcome, boundaries, and high-level
+        readiness to advance.
+
+
+      Rules:
+
+      - Keep each phase broad enough to generate several related tasks but
+        bounded enough to decompose directly without another phase-like layer.
+
+      - Name and organize phases by coherent outcomes, not technical layers,
+        routine disciplines, or implementation activities.
+
+      - Do not include checkboxes, completion states, current progress, task IDs,
+        estimated sizes, verification commands, or likely file paths.
+
+      - Do not duplicate detailed requirements or technical decisions. Reference
+        the specs, design, and ADRs that control them.
+
+      - When revising the plan, determine completed phases from the supplied
+        context. If tasks.md exists, treat checked tasks as evidence of completed
+        work, not by themselves as proof that an entire phase is complete.
+        Resolve uncertainty before revising a phase that may be completed.
+
+      - Preserve completed phases verbatim. Revise the earliest affected
+        unfinished phase and only the later phases whose direction, boundaries,
+        or outcomes change. Surface conflicts with completed work instead of
+        silently rewriting it.
+
+      - Keep progress and completion state exclusively in tasks.md. Preserving a
+        completed phase's wording does not make plan.md a progress tracker.
+
+
+      Reference specs for required behavior, design for the current technical
+      approach, and <repo>/docs/adr/ for durable architectural commitments.
+    requires:
+      - specs
+      - design
+      - adr
+  - id: tasks
+    generates: tasks.md
+    description: Phase-scoped implementation task packages
+    template: tasks.md
+    instruction: |
+      Create or update tasks.md by decomposing exactly one phase from plan.md.
+      Never create or update packages for multiple phases in one invocation.
+
+
+      Before writing, re-read plan.md, existing tasks.md, and all supplied upstream
+      artifacts: proposal, specs, design, the ADR review manifest, and referenced
+      durable ADRs.
+
+
+      Phase ledger:
+
+      - Plan phases are unique, sequential `## Phase N: <title>` headings starting
+        at Phase 1.
+
+      - Each represented phase is one task package whose exact plan heading appears
+        immediately before its first checkbox.
+
+      - Represented packages form a continuous Phase 1 through Phase K prefix.
+
+      - At most the last represented package may contain unchecked tasks. Stop
+        without modifying tasks.md if the ledger is missing, ambiguous, or
+        inconsistent with plan.md, and report the exact conflict.
+
+
+      Phase selection:
+
+      - If no package exists, create Phase 1 only.
+
+      - If the last package has unchecked tasks, update only that package.
+
+      - Otherwise, append only Phase K+1 when it exists. If every plan phase already
+        has a complete package, make no changes.
+
+
+      Rules:
+
+      - Preserve checked task blocks and completed phase headings verbatim. Never
+        uncheck, renumber, reword, reorder, or move completed work. An unfinished
+        package may adopt the current title of the same unambiguous phase.
+
+      - Add requirement-driven corrective work as a new unchecked task in the
+        selected unfinished or future phase, using its next unused `N.X` identifier.
+        Require a plan update when no suitable phase exists.
+
+      - Scope new tasks to the selected phase's objective, outcome, boundaries, and
+        readiness gate. Do not pull work forward from later phases.
+
+      - Follow the supplied template. Use the phase heading as the only new `##`
+        heading and checkboxes only for primary tasks. End the package with a tracked
+        checkpoint proving the phase's `Ready to advance` condition.
+
+      - Include strict change validation when implementation affects behaviour
+        specs.
+
+
+      Reference specs for required behaviour, design for the implementation
+      approach, and durable ADRs for architectural constraints.
+    requires:
+      - proposal
+      - specs
+      - design
+      - adr
+      - plan
+apply:
+  requires:
+    - plan
+    - tasks
+  tracks: tasks.md
+  instruction: |
+    Re-read all context files, especially plan.md and tasks.md.
+
+    Before implementation, verify that:
+
+    - plan phases are unique and sequential from Phase 1;
+    - every task package has the exact matching phase heading before its first
+      checkbox;
+    - packages form a continuous plan prefix;
+    - only the last package may contain unchecked tasks.
+
+    Stop before implementation if phase references are missing, ambiguous, or
+    inconsistent. Work only on unchecked tasks in the last package, marking each
+    complete only after its full contract is satisfied.
+
+    When the package is complete, re-read plan.md and tasks.md:
+
+    - if phases remain unrepresented, report only `Phase N` complete, state that
+      the change is incomplete, stop, and propose using openspec-update-change to
+      append the next package;
+    - if every plan phase has a complete package, report the change complete and
+      recommend verification before archive.
+
+    Do not implement unrepresented phases or recommend archive after an
+    intermediate package. Pause on blockers or unclear tasks.
+
+    Apply leaves this change's ADRs proposed; only archival makes them accepted.

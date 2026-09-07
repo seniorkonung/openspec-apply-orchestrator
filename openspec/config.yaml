@@ -1,0 +1,42 @@
+schema: intent-driven
+
+rules:
+  design:
+    - Use c4-diagrams when boundaries, dependencies, data flow, or runtime interactions benefit from visualization
+  adr:
+    - Must use domain-modeling skill for decision qualification and terminology; follow the schema-defined ADR format
+    - Use grill-with-docs skill before completing ADR review when the design contains consequential unresolved decisions
+  specs:
+    - Must use openspec-gherkin-authoring skill
+  plan:
+    - Must use phased-planning skill
+  tasks:
+    - Must use planning-and-task-breakdown skill
+operations:
+  apply:
+    guidance:
+      - Must use incremental-implementation and test-driven-development skills
+      - As tasks are completed, group and commit source code changes incrementally. Avoid accumulating a large number of uncommitted changes.
+      - After committing changes, check how much context window remains. If it is unlikely to be sufficient for the upcoming tasks through the next commit, stop and suggest continuing the work in a new session.
+  archive:
+    guidance:
+      - >-
+        Before archiving, re-read the current plan.md and tasks.md. Do not archive
+        when their phase references are missing, ambiguous, or contradictory, or
+        while any phase in plan.md lacks a represented, completed task package;
+        an unrepresented phase counts as lacking a completed package.
+      - >-
+        Treat completion of one intermediate phase package only as completion of
+        that phase, never as completion of the whole change. Stop and direct the
+        user to update tasks.md with the next single phase package instead of
+        archiving.
+      - >-
+        For intent-driven changes, after all archive checks and any requested
+        spec sync succeed, resolve finalization targets from the ADR manifest's
+        owned-ADR list; relevance references are not targets. Before moving the
+        change, verify that every target exists, has Status: proposed, and has a
+        matching Originating change. Then move the change and set those ADRs to
+        accepted without changing other fields. A failed move leaves their
+        statuses unchanged. If finalization fails after the move, resume from
+        the archive location and report the remaining ADRs. Report completion
+        only when every target is accepted.
