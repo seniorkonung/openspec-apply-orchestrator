@@ -226,8 +226,12 @@ func TestInspectРазличаетРаботуОжиданиеИЗакрытие
 			name:   "ожидание после завершённого хода",
 			status: "idle",
 			assert: func(t *testing.T, got orchestrator.OwnSessionObservation) {
-				if _, ok := got.(orchestrator.OwnSessionAwaitingAction); !ok {
+				waiting, ok := got.(orchestrator.OwnSessionAwaitingAction)
+				if !ok {
 					t.Fatalf("ожидалось действие, получено %T", got)
+				}
+				if waiting.Reason != orchestrator.SessionTurnFinished {
+					t.Fatalf("неожиданная причина ожидания: %v", waiting.Reason)
 				}
 			},
 		},
@@ -238,8 +242,12 @@ func TestInspectРазличаетРаботуОжиданиеИЗакрытие
 				inspect["PendingPermissions"] = []map[string]any{{"id": "permission-1", "tool": "Bash"}}
 			},
 			assert: func(t *testing.T, got orchestrator.OwnSessionObservation) {
-				if _, ok := got.(orchestrator.OwnSessionAwaitingAction); !ok {
+				waiting, ok := got.(orchestrator.OwnSessionAwaitingAction)
+				if !ok {
 					t.Fatalf("ожидалось разрешение, получено %T", got)
+				}
+				if waiting.Reason != orchestrator.SessionPermissionRequested {
+					t.Fatalf("неожиданная причина ожидания: %v", waiting.Reason)
 				}
 			},
 		},
@@ -247,8 +255,12 @@ func TestInspectРазличаетРаботуОжиданиеИЗакрытие
 			name:   "ошибка агента",
 			status: "error",
 			assert: func(t *testing.T, got orchestrator.OwnSessionObservation) {
-				if _, ok := got.(orchestrator.OwnSessionAwaitingAction); !ok {
+				waiting, ok := got.(orchestrator.OwnSessionAwaitingAction)
+				if !ok {
 					t.Fatalf("ожидалось участие после ошибки, получено %T", got)
+				}
+				if waiting.Reason != orchestrator.SessionAgentError {
+					t.Fatalf("неожиданная причина ожидания: %v", waiting.Reason)
 				}
 			},
 		},

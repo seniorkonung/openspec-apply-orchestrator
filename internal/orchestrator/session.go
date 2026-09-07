@@ -121,9 +121,18 @@ func (WorkingOwnSession) isOwnSessionObservation() {}
 
 type OwnSessionAwaitingAction struct {
 	Session ManagedSession
+	Reason  SessionAttentionReason
 }
 
 func (OwnSessionAwaitingAction) isOwnSessionObservation() {}
+
+type SessionAttentionReason uint8
+
+const (
+	SessionTurnFinished SessionAttentionReason = iota + 1
+	SessionAgentError
+	SessionPermissionRequested
+)
 
 type ObservedOwnSessionClosed struct {
 	Session ManagedSession
@@ -148,6 +157,7 @@ const (
 type validatedSession struct {
 	session ManagedSession
 	state   sessionState
+	reason  SessionAttentionReason
 }
 
 func ObserveOwnSessions(
@@ -202,7 +212,7 @@ func validateOwnSession(
 		return validatedSession{}, fmt.Errorf("%w: проверенная сессия относится к другому workspace", ErrInvalidOwnership)
 	}
 
-	state, err := validateSessionState(raw)
+	state, reason, err := validateSessionState(raw)
 	if err != nil {
 		return validatedSession{}, err
 	}
@@ -210,6 +220,7 @@ func validateOwnSession(
 	return validatedSession{
 		session: ManagedSession{id: id, workspaceID: expectedWorkspace, changeKey: expectedChange},
 		state:   state,
+		reason:  reason,
 	}, nil
 }
 
@@ -242,43 +253,55 @@ func validateOwnershipLabels(
 	return nil
 }
 
-func validateSessionState(raw UntrustedOwnSession) (sessionState, error) {
-	if raw.AttentionReason != "" && !raw.RequiresAttention {
-		return 0, fmt.Errorf("%w: причина участия без признака участия", ErrContradictorySessionState)
-	}
-	if raw.RequiresAttention && !knownAttentionReason(raw.AttentionReason) {
-		return 0, fmt.Errorf("%w: неизвестная причина участия %q", ErrContradictorySessionState, raw.AttentionReason)
+func validateSessionState(raw UntrustedOwnSession) (sessionState, SessionAttentionReason, error) {
+	reason, err := validateAttentionReason(raw)
+	if err != nil {
+		return 0, 0, err
 	}
 
 	switch raw.Status {
 	case "initializing", "running":
-		if raw.RequiresAttention {
-			return 0, fmt.Errorf("%w: работа и потребность в действии", ErrContradictorySessionState)
+		if reason != 0 {
+			return 0, 0, fmt.Errorf("%w: работа и потребность в действии", ErrContradictorySessionState)
 		}
-		return sessionWorking, nil
+		return sessionWorking, 0, nil
 	case "idle":
-		return sessionAwaitingAction, nil
+		if reason != SessionTurnFinished && reason != SessionPermissionRequested {
+			return 0, 0, fmt.Errorf("%w: завершённый ход без допустимой причины ожидания", ErrContradictorySessionState)
+		}
+		return sessionAwaitingAction, reason, nil
 	case "error":
-		if raw.RequiresAttention && raw.AttentionReason != "error" {
-			return 0, fmt.Errorf("%w: ошибка с причиной %q", ErrContradictorySessionState, raw.AttentionReason)
+		if reason != SessionAgentError {
+			return 0, 0, fmt.Errorf("%w: ошибка с причиной %q", ErrContradictorySessionState, raw.AttentionReason)
 		}
-		return sessionAwaitingAction, nil
+		return sessionAwaitingAction, reason, nil
 	case "closed":
-		if raw.RequiresAttention {
-			return 0, fmt.Errorf("%w: закрытие и потребность в действии", ErrContradictorySessionState)
+		if reason != 0 {
+			return 0, 0, fmt.Errorf("%w: закрытие и потребность в действии", ErrContradictorySessionState)
 		}
-		return sessionClosed, nil
+		return sessionClosed, 0, nil
 	default:
-		return 0, fmt.Errorf("%w: неизвестное состояние %q", ErrContradictorySessionState, raw.Status)
+		return 0, 0, fmt.Errorf("%w: неизвестное состояние %q", ErrContradictorySessionState, raw.Status)
 	}
 }
 
-func knownAttentionReason(reason string) bool {
-	switch reason {
-	case "finished", "error", "permission":
-		return true
+func validateAttentionReason(raw UntrustedOwnSession) (SessionAttentionReason, error) {
+	if !raw.RequiresAttention {
+		if raw.AttentionReason != "" {
+			return 0, fmt.Errorf("%w: причина участия без признака участия", ErrContradictorySessionState)
+		}
+		return 0, nil
+	}
+
+	switch raw.AttentionReason {
+	case "finished":
+		return SessionTurnFinished, nil
+	case "error":
+		return SessionAgentError, nil
+	case "permission":
+		return SessionPermissionRequested, nil
 	default:
-		return false
+		return 0, fmt.Errorf("%w: неизвестная причина участия %q", ErrContradictorySessionState, raw.AttentionReason)
 	}
 }
 
@@ -287,7 +310,7 @@ func observationFor(session validatedSession) OwnSessionObservation {
 	case sessionWorking:
 		return WorkingOwnSession{Session: session.session}
 	case sessionAwaitingAction:
-		return OwnSessionAwaitingAction{Session: session.session}
+		return OwnSessionAwaitingAction{Session: session.session, Reason: session.reason}
 	case sessionClosed:
 		return ObservedOwnSessionClosed{Session: session.session}
 	default:

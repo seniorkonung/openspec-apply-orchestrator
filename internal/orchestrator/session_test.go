@@ -85,8 +85,12 @@ func TestНаблюдениеСессииИмеетВзаимоисключаю�
 				withAttention(validSession("session-1", "idle"), "finished"),
 			},
 			assert: func(t *testing.T, got OwnSessionObservation) {
-				if _, ok := got.(OwnSessionAwaitingAction); !ok {
+				waiting, ok := got.(OwnSessionAwaitingAction)
+				if !ok {
 					t.Fatalf("ожидалась сессия, ожидающая действия, получено %T", got)
+				}
+				if waiting.Reason != SessionTurnFinished {
+					t.Fatalf("неожиданная причина ожидания: %v", waiting.Reason)
 				}
 			},
 		},
@@ -124,6 +128,40 @@ func TestНаблюдениеСессииИмеетВзаимоисключаю�
 				t.Fatalf("построить наблюдение: %v", err)
 			}
 			tt.assert(t, got)
+		})
+	}
+}
+
+func TestПричинаОжиданияИмеетЗакрытыеТипизированныеВарианты(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+
+	tests := []struct {
+		name   string
+		status string
+		reason string
+		want   SessionAttentionReason
+	}{
+		{name: "ход завершён", status: "idle", reason: "finished", want: SessionTurnFinished},
+		{name: "агент завершился с ошибкой", status: "error", reason: "error", want: SessionAgentError},
+		{name: "агент запросил разрешение", status: "idle", reason: "permission", want: SessionPermissionRequested},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			observation, err := ObserveOwnSessions(change, workspace, []UntrustedOwnSession{
+				withAttention(validSession("session-1", tt.status), tt.reason),
+			})
+			if err != nil {
+				t.Fatalf("построить наблюдение: %v", err)
+			}
+			waiting, ok := observation.(OwnSessionAwaitingAction)
+			if !ok {
+				t.Fatalf("ожидалось ожидание действия, получено %T", observation)
+			}
+			if waiting.Reason != tt.want {
+				t.Fatalf("ожидалась причина %v, получено %v", tt.want, waiting.Reason)
+			}
 		})
 	}
 }
@@ -187,6 +225,18 @@ func TestПротиворечивоеСостояниеОтклоняется(t 
 		{
 			name: "неизвестное состояние",
 			raw:  validSession("session-1", "sleeping"),
+		},
+		{
+			name: "завершённый ход без причины ожидания",
+			raw:  validSession("session-1", "idle"),
+		},
+		{
+			name: "ошибка без причины ожидания",
+			raw:  validSession("session-1", "error"),
+		},
+		{
+			name: "ошибка отмечена как завершённый ход",
+			raw:  withAttention(validSession("session-1", "error"), "finished"),
 		},
 	}
 
