@@ -165,6 +165,8 @@ elif [ "$1" = "status" ]; then
   stdout="${FAKE_PASEO_STATUS-$stdout}"
 elif [ "$1" = "workspace" ] && [ "$2" = "ls" ]; then
   stdout="${FAKE_PASEO_WORKSPACES-$stdout}"
+elif [ "$1" = "workspace" ] && [ "$2" = "create" ]; then
+  stdout="${FAKE_PASEO_WORKSPACE_CREATE-$stdout}"
 elif [ "$1" = "ls" ]; then
   exact=""
   for argument in "$@"; do

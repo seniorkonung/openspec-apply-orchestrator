@@ -127,23 +127,30 @@ func decodeWorkspaceList(output []byte) ([]rawWorkspaceJSON, error) {
 		return nil, fmt.Errorf("%w: список workspace равен null", ErrUnexpectedJSON)
 	}
 	for index, workspace := range workspaces {
-		if !workspace.WorkspaceID.present || !workspace.Project.present || !workspace.Name.present ||
-			!workspace.Isolation.present || !workspace.CWD.present {
-			return nil, fmt.Errorf("%w: workspace %d не содержит обязательное поле", ErrUnexpectedJSON, index+1)
-		}
-		if !validIdentifierValue(workspace.WorkspaceID.value) ||
-			!validOpaqueValue(workspace.Project.value) ||
-			!validOpaqueValue(workspace.Name.value) ||
-			!filepath.IsAbs(workspace.CWD.value) {
-			return nil, fmt.Errorf("%w: workspace %d содержит некорректное поле", ErrUnexpectedJSON, index+1)
-		}
-		switch workspace.Isolation.value {
-		case "local", "worktree":
-		default:
-			return nil, fmt.Errorf("%w: workspace %d содержит неизвестную изоляцию", ErrUnexpectedJSON, index+1)
+		if err := validateWorkspaceJSON(workspace); err != nil {
+			return nil, fmt.Errorf("workspace %d: %w", index+1, err)
 		}
 	}
 	return workspaces, nil
+}
+
+func validateWorkspaceJSON(workspace rawWorkspaceJSON) error {
+	if !workspace.WorkspaceID.present || !workspace.Project.present || !workspace.Name.present ||
+		!workspace.Isolation.present || !workspace.CWD.present {
+		return fmt.Errorf("%w: не содержит обязательное поле", ErrUnexpectedJSON)
+	}
+	if !validIdentifierValue(workspace.WorkspaceID.value) ||
+		!validOpaqueValue(workspace.Project.value) ||
+		!validOpaqueValue(workspace.Name.value) ||
+		!filepath.IsAbs(workspace.CWD.value) {
+		return fmt.Errorf("%w: содержит некорректное поле", ErrUnexpectedJSON)
+	}
+	switch workspace.Isolation.value {
+	case "local", "worktree":
+		return nil
+	default:
+		return fmt.Errorf("%w: содержит неизвестную изоляцию", ErrUnexpectedJSON)
+	}
 }
 
 func canonicalDirectory(path string) (string, error) {
