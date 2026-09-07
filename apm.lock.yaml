@@ -1,5 +1,5 @@
 lockfile_version: '2'
-generated_at: '2026-09-07T07:43:36.628686+00:00'
+generated_at: '2026-09-07T09:48:31.698761+00:00'
 apm_version: 0.28.0
 dependencies:
 - repo_url: fission-ai/openspec
@@ -52,7 +52,7 @@ dependencies:
 - repo_url: seniorkonung/agent-skills
   name: agent-skills
   host: github.com
-  resolved_commit: 899f471a16fb6bb4e1f3d54b148cddf521e0042e
+  resolved_commit: a8afff962a1e2e95f6a150b4a53935f08a3b0941
   resolved_ref: main
   version: 0.0.1
   package_type: apm_package
@@ -90,18 +90,32 @@ dependencies:
   - .agents/skills/openspec-gherkin-authoring/SKILL.md
   - .agents/skills/openspec-review-change
   - .agents/skills/openspec-review-change/SKILL.md
+  - .agents/skills/openspec-review-change/assets/review-template.md
   - .agents/skills/openspec-review-change/references/evaluation-cases.md
   - .agents/skills/openspec-review-change/references/review-format.md
   - .agents/skills/openspec-review-change/references/review-lenses.md
+  - .agents/skills/openspec-review-change/references/validator-interface.md
+  - .agents/skills/openspec-review-change/scripts/review-format.mjs
+  - .agents/skills/openspec-review-change/scripts/validate-review.mjs
+  - .agents/skills/openspec-review-change/tests/fixtures/valid-review.json
+  - .agents/skills/openspec-review-change/tests/fixtures/valid-review.md
+  - .agents/skills/openspec-review-change/tests/validate-review.test.mjs
   - .agents/skills/openspec-review-implementation
   - .agents/skills/openspec-review-implementation/SKILL.md
+  - .agents/skills/openspec-review-implementation/assets/review-template.md
   - .agents/skills/openspec-review-implementation/references/evaluation-cases.md
   - .agents/skills/openspec-review-implementation/references/intention-brief.md
   - .agents/skills/openspec-review-implementation/references/remediation.md
   - .agents/skills/openspec-review-implementation/references/review-format.md
   - .agents/skills/openspec-review-implementation/references/review-target.md
+  - .agents/skills/openspec-review-implementation/references/validator-interface.md
   - .agents/skills/openspec-review-implementation/scripts/discover-review-target.mjs
+  - .agents/skills/openspec-review-implementation/scripts/review-format.mjs
+  - .agents/skills/openspec-review-implementation/scripts/validate-review.mjs
   - .agents/skills/openspec-review-implementation/tests/discover-review-target.test.mjs
+  - .agents/skills/openspec-review-implementation/tests/fixtures/valid-review.json
+  - .agents/skills/openspec-review-implementation/tests/fixtures/valid-review.md
+  - .agents/skills/openspec-review-implementation/tests/validate-review.test.mjs
   - .agents/skills/openspec-task-deliberation
   - .agents/skills/openspec-task-deliberation/SKILL.md
   - .agents/skills/openspec-task-deliberation/references/evaluation-cases.md
@@ -140,18 +154,32 @@ dependencies:
     .agents/skills/incremental-implementation/SKILL.md: sha256:9fc3b1931a1aa6da02e51d030f872cb52771843830b375fc91e43885a73fa853
     .agents/skills/observability-and-instrumentation/SKILL.md: sha256:e4e75a3b486967db22b1446ab694b82116800cb19cc6b9387ac79a604da83bca
     .agents/skills/openspec-gherkin-authoring/SKILL.md: sha256:d6520b4823eaee953b39c6c9354516a71b8a76c816ffbfc56690353e34732a2e
-    .agents/skills/openspec-review-change/SKILL.md: sha256:fbb0d5dcc3be8642b94dec1b227bdf877278d6dac08a7f9c2fd3bd49932b8004
-    .agents/skills/openspec-review-change/references/evaluation-cases.md: sha256:aa218248d2852afdb863cede16374dfb82003828e1bc2b46f631ce164a210de2
-    .agents/skills/openspec-review-change/references/review-format.md: sha256:8d6a8c1e37e595779009948d1e357599eb2edb95950347fa9a83f451a010a3da
+    .agents/skills/openspec-review-change/SKILL.md: sha256:e964618b45be87b0be0e58eb2142ba5ce942015c45ed1c95aed78628af927e83
+    .agents/skills/openspec-review-change/assets/review-template.md: sha256:93d7fb2b378e0bf6664ddc1d33ba473aabf7ed62a3e1efd751b98ed0dcbf5a6e
+    .agents/skills/openspec-review-change/references/evaluation-cases.md: sha256:12d4491bf6f1394375900fbd9060158e8ea519862b8931f52e511d4a5bbc2a29
+    .agents/skills/openspec-review-change/references/review-format.md: sha256:6abb7d5b9e453eddfbc1542428e0a8489896179aaa21d816c8eaf644d9654a38
     .agents/skills/openspec-review-change/references/review-lenses.md: sha256:22ab41810403a10c82b2805d393707a8a7da321398bc649c9dd237e0dd3fbb34
-    .agents/skills/openspec-review-implementation/SKILL.md: sha256:b2a0018ace6f52d205ab9bbbff3a9fae35092966f0685a78c4153c468a1e31c5
-    .agents/skills/openspec-review-implementation/references/evaluation-cases.md: sha256:7077bf5a21579e16164a23edaf73813be23fcfc37fe6be307ad64272951fcdcd
+    .agents/skills/openspec-review-change/references/validator-interface.md: sha256:00b9c7df3a87eee651aac9a2c5d248413dd7e42f3f731cce6ec8e97d90b523a2
+    .agents/skills/openspec-review-change/scripts/review-format.mjs: sha256:2d2cc9175d654bb0f9cdf7bc6f867a77829250b9a7975d8070c9f780b54a3458
+    .agents/skills/openspec-review-change/scripts/validate-review.mjs: sha256:38fae1eae3a0893e03e21b67f8db6084234ad6f13d404e20aabb312db93cc2d1
+    .agents/skills/openspec-review-change/tests/fixtures/valid-review.json: sha256:8cc5e3b745df47c6bc605a2d6b9109bfdf22f72e174580f542b5b47e8a83cbef
+    .agents/skills/openspec-review-change/tests/fixtures/valid-review.md: sha256:0c99baf7c79aafc7eb802d86986a57c85456dcec5905fe59296ed08e660f4cf6
+    .agents/skills/openspec-review-change/tests/validate-review.test.mjs: sha256:bae3725fab379e1e9966b1c4a0316097d309f5c3d1b2aabdbe3c06755f7915bd
+    .agents/skills/openspec-review-implementation/SKILL.md: sha256:be7afaaec55c391ee9d7651641430f24fe1283ed951d505b40e58b3cbe197623
+    .agents/skills/openspec-review-implementation/assets/review-template.md: sha256:36e480f4f6c6cadba1f9a31ae1650719e9d721a0e793c5c1e0aa5f21682b9539
+    .agents/skills/openspec-review-implementation/references/evaluation-cases.md: sha256:cbef4f312fa4915dfb7e6c0a7c9a0cc9e633bdaf426091555bb759fa8ff79494
     .agents/skills/openspec-review-implementation/references/intention-brief.md: sha256:24bfca5cc6c8e67ac0deb802958a8eba69ca1aa86d2f81ac2808815b987507c0
-    .agents/skills/openspec-review-implementation/references/remediation.md: sha256:5abe78571f6e82897018a427089aaa3cc69f59abec4fd786267ba89019be6e0e
-    .agents/skills/openspec-review-implementation/references/review-format.md: sha256:501357ef50a3a5784dd29eea4fa267df5852f6b42910b5cacb68454b04316dbe
+    .agents/skills/openspec-review-implementation/references/remediation.md: sha256:d0c49ace8d3411047b5341e73540b2ca524e82a3d98dadddf782f1d0ddd23483
+    .agents/skills/openspec-review-implementation/references/review-format.md: sha256:1537852cc8c48420b2fdeb225b62312a03b1702b90eb355c17ad3824b3790458
     .agents/skills/openspec-review-implementation/references/review-target.md: sha256:4de64a4355b681a02136356694ba86f7b032e42ea49bc9f494b1d32c38475bbb
+    .agents/skills/openspec-review-implementation/references/validator-interface.md: sha256:3c1eca5422f1b2b8e7dfdafbc873f68a3171c26197c380262745efb73db1ef29
     .agents/skills/openspec-review-implementation/scripts/discover-review-target.mjs: sha256:6485f7016aa8fe9ea57028c68317d6b6a1fdeb47b1f2e47fd9447f649bf811cf
+    .agents/skills/openspec-review-implementation/scripts/review-format.mjs: sha256:2d2cc9175d654bb0f9cdf7bc6f867a77829250b9a7975d8070c9f780b54a3458
+    .agents/skills/openspec-review-implementation/scripts/validate-review.mjs: sha256:e9f3e9b8f2160e46fab7e6dbcdbcf63623b3d66f089a91892d29b8118100a116
     .agents/skills/openspec-review-implementation/tests/discover-review-target.test.mjs: sha256:3b5912c2fba709e8c6c38a1ca44b589cbff723bd7e3a5dc0e3d65a69853b2918
+    .agents/skills/openspec-review-implementation/tests/fixtures/valid-review.json: sha256:e260e3a9028cf9151afc28e242e5d3e60b5d194024f34fdf82c0e50152207c2b
+    .agents/skills/openspec-review-implementation/tests/fixtures/valid-review.md: sha256:95ed714cfc1989dfca6fcdfff283c2d5f421cb212cfa3311823a609b1a264aa8
+    .agents/skills/openspec-review-implementation/tests/validate-review.test.mjs: sha256:bae3725fab379e1e9966b1c4a0316097d309f5c3d1b2aabdbe3c06755f7915bd
     .agents/skills/openspec-task-deliberation/SKILL.md: sha256:4aa67c0a37f33f48213651fec54f7c28e31eac8ed1f7c1510ca04c8b3a417552
     .agents/skills/openspec-task-deliberation/references/evaluation-cases.md: sha256:43689993146fba677e652a44cfabb789b3e9c37c9d66dd47849fad9859cd093f
     .agents/skills/phased-planning/SKILL.md: sha256:f6e9d5c94db8837f005182bcdc5e3d4f511bb88741cdd71829ce6aeaa0badd1c
@@ -162,7 +190,7 @@ dependencies:
     .codex/agents/code-reviewer.toml: sha256:68551392550f16bad4545b154ec710ba215623bcb35f95f8ab2e613d798b50dd
     .codex/agents/security-auditor.toml: sha256:6f2bec3bded4da237fa14b74fd77720f0e7d96982f09288652aec26b228110dd
     .codex/agents/test-engineer.toml: sha256:729261399bedbfa7af957725773fddea919b1e094a81ebe6d8a6e476d54c7ff8
-  content_hash: sha256:ecb21762c34e594d4b913ce014ad59047d1b0033028f10b83f9b21b7d6a30e09
+  content_hash: sha256:80739db8b8fb7d5749d011ec25825e30a3b23dee721ab6a67c24f3677a7774f4
   skill_subset:
   - c4-diagrams
   - change-summary
@@ -211,7 +239,7 @@ dependencies:
   - agent-skills
   constraint: 0.6.5
   resolved_tag: 0.6.5
-  resolved_at: '2026-09-07T07:43:27+00:00'
+  resolved_at: '2026-09-07T09:48:20+00:00'
 - repo_url: mattpocock/skills
   name: mattpocock-skills
   host: github.com
@@ -776,7 +804,16 @@ deployments:
   owners:
   - seniorkonung/agent-skills
   active_owner: seniorkonung/agent-skills
-  content_hash: sha256:fbb0d5dcc3be8642b94dec1b227bdf877278d6dac08a7f9c2fd3bd49932b8004
+  content_hash: sha256:e964618b45be87b0be0e58eb2142ba5ce942015c45ed1c95aed78628af927e83
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/openspec-review-change/assets/review-template.md
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:93d7fb2b378e0bf6664ddc1d33ba473aabf7ed62a3e1efd751b98ed0dcbf5a6e
 - kind: project-relative
   target: agent-skills
   value: .agents/skills/openspec-review-change/references/evaluation-cases.md
@@ -785,7 +822,7 @@ deployments:
   owners:
   - seniorkonung/agent-skills
   active_owner: seniorkonung/agent-skills
-  content_hash: sha256:aa218248d2852afdb863cede16374dfb82003828e1bc2b46f631ce164a210de2
+  content_hash: sha256:12d4491bf6f1394375900fbd9060158e8ea519862b8931f52e511d4a5bbc2a29
 - kind: project-relative
   target: agent-skills
   value: .agents/skills/openspec-review-change/references/review-format.md
@@ -794,7 +831,7 @@ deployments:
   owners:
   - seniorkonung/agent-skills
   active_owner: seniorkonung/agent-skills
-  content_hash: sha256:8d6a8c1e37e595779009948d1e357599eb2edb95950347fa9a83f451a010a3da
+  content_hash: sha256:6abb7d5b9e453eddfbc1542428e0a8489896179aaa21d816c8eaf644d9654a38
 - kind: project-relative
   target: agent-skills
   value: .agents/skills/openspec-review-change/references/review-lenses.md
@@ -804,6 +841,60 @@ deployments:
   - seniorkonung/agent-skills
   active_owner: seniorkonung/agent-skills
   content_hash: sha256:22ab41810403a10c82b2805d393707a8a7da321398bc649c9dd237e0dd3fbb34
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/openspec-review-change/references/validator-interface.md
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:00b9c7df3a87eee651aac9a2c5d248413dd7e42f3f731cce6ec8e97d90b523a2
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/openspec-review-change/scripts/review-format.mjs
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:2d2cc9175d654bb0f9cdf7bc6f867a77829250b9a7975d8070c9f780b54a3458
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/openspec-review-change/scripts/validate-review.mjs
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:38fae1eae3a0893e03e21b67f8db6084234ad6f13d404e20aabb312db93cc2d1
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/openspec-review-change/tests/fixtures/valid-review.json
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:8cc5e3b745df47c6bc605a2d6b9109bfdf22f72e174580f542b5b47e8a83cbef
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/openspec-review-change/tests/fixtures/valid-review.md
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:0c99baf7c79aafc7eb802d86986a57c85456dcec5905fe59296ed08e660f4cf6
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/openspec-review-change/tests/validate-review.test.mjs
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:bae3725fab379e1e9966b1c4a0316097d309f5c3d1b2aabdbe3c06755f7915bd
 - kind: project-relative
   target: agent-skills
   value: .agents/skills/openspec-review-implementation
@@ -821,7 +912,16 @@ deployments:
   owners:
   - seniorkonung/agent-skills
   active_owner: seniorkonung/agent-skills
-  content_hash: sha256:b2a0018ace6f52d205ab9bbbff3a9fae35092966f0685a78c4153c468a1e31c5
+  content_hash: sha256:be7afaaec55c391ee9d7651641430f24fe1283ed951d505b40e58b3cbe197623
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/openspec-review-implementation/assets/review-template.md
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:36e480f4f6c6cadba1f9a31ae1650719e9d721a0e793c5c1e0aa5f21682b9539
 - kind: project-relative
   target: agent-skills
   value: .agents/skills/openspec-review-implementation/references/evaluation-cases.md
@@ -830,7 +930,7 @@ deployments:
   owners:
   - seniorkonung/agent-skills
   active_owner: seniorkonung/agent-skills
-  content_hash: sha256:7077bf5a21579e16164a23edaf73813be23fcfc37fe6be307ad64272951fcdcd
+  content_hash: sha256:cbef4f312fa4915dfb7e6c0a7c9a0cc9e633bdaf426091555bb759fa8ff79494
 - kind: project-relative
   target: agent-skills
   value: .agents/skills/openspec-review-implementation/references/intention-brief.md
@@ -848,7 +948,7 @@ deployments:
   owners:
   - seniorkonung/agent-skills
   active_owner: seniorkonung/agent-skills
-  content_hash: sha256:5abe78571f6e82897018a427089aaa3cc69f59abec4fd786267ba89019be6e0e
+  content_hash: sha256:d0c49ace8d3411047b5341e73540b2ca524e82a3d98dadddf782f1d0ddd23483
 - kind: project-relative
   target: agent-skills
   value: .agents/skills/openspec-review-implementation/references/review-format.md
@@ -857,7 +957,7 @@ deployments:
   owners:
   - seniorkonung/agent-skills
   active_owner: seniorkonung/agent-skills
-  content_hash: sha256:501357ef50a3a5784dd29eea4fa267df5852f6b42910b5cacb68454b04316dbe
+  content_hash: sha256:1537852cc8c48420b2fdeb225b62312a03b1702b90eb355c17ad3824b3790458
 - kind: project-relative
   target: agent-skills
   value: .agents/skills/openspec-review-implementation/references/review-target.md
@@ -869,6 +969,15 @@ deployments:
   content_hash: sha256:4de64a4355b681a02136356694ba86f7b032e42ea49bc9f494b1d32c38475bbb
 - kind: project-relative
   target: agent-skills
+  value: .agents/skills/openspec-review-implementation/references/validator-interface.md
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:3c1eca5422f1b2b8e7dfdafbc873f68a3171c26197c380262745efb73db1ef29
+- kind: project-relative
+  target: agent-skills
   value: .agents/skills/openspec-review-implementation/scripts/discover-review-target.mjs
   runtime: null
   scope: project
@@ -878,6 +987,24 @@ deployments:
   content_hash: sha256:6485f7016aa8fe9ea57028c68317d6b6a1fdeb47b1f2e47fd9447f649bf811cf
 - kind: project-relative
   target: agent-skills
+  value: .agents/skills/openspec-review-implementation/scripts/review-format.mjs
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:2d2cc9175d654bb0f9cdf7bc6f867a77829250b9a7975d8070c9f780b54a3458
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/openspec-review-implementation/scripts/validate-review.mjs
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:e9f3e9b8f2160e46fab7e6dbcdbcf63623b3d66f089a91892d29b8118100a116
+- kind: project-relative
+  target: agent-skills
   value: .agents/skills/openspec-review-implementation/tests/discover-review-target.test.mjs
   runtime: null
   scope: project
@@ -885,6 +1012,33 @@ deployments:
   - seniorkonung/agent-skills
   active_owner: seniorkonung/agent-skills
   content_hash: sha256:3b5912c2fba709e8c6c38a1ca44b589cbff723bd7e3a5dc0e3d65a69853b2918
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/openspec-review-implementation/tests/fixtures/valid-review.json
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:e260e3a9028cf9151afc28e242e5d3e60b5d194024f34fdf82c0e50152207c2b
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/openspec-review-implementation/tests/fixtures/valid-review.md
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:95ed714cfc1989dfca6fcdfff283c2d5f421cb212cfa3311823a609b1a264aa8
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/openspec-review-implementation/tests/validate-review.test.mjs
+  runtime: null
+  scope: project
+  owners:
+  - seniorkonung/agent-skills
+  active_owner: seniorkonung/agent-skills
+  content_hash: sha256:bae3725fab379e1e9966b1c4a0316097d309f5c3d1b2aabdbe3c06755f7915bd
 - kind: project-relative
   target: agent-skills
   value: .agents/skills/openspec-sync-specs
