@@ -237,6 +237,65 @@ func TestРаботающаяСессияНеАрхивируется(t *testing
 	}
 }
 
+func TestПотерянныйОтветArchiveРазрешаетсяПовторнымInspect(t *testing.T) {
+	tests := []struct {
+		name          string
+		afterArchived bool
+		expected      error
+	}{
+		{name: "inspect подтверждает архивирование", afterArchived: true},
+		{name: "inspect не подтверждает архивирование", expected: ErrArchiveOutcomeUnknown},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+			workspace := ActiveWorkspace{
+				id:   mustMutationWorkspaceID(t, "workspace-1"),
+				name: managedWorkspaceName(change),
+				cwd:  cwd,
+			}
+			session := mustMutationManagedSession(t, "agent-123", change, workspace.id)
+			client := newFakeClient(t)
+			recordPath := filepath.Join(t.TempDir(), "вызовы")
+			archiveState := filepath.Join(t.TempDir(), "архивировано")
+			t.Setenv("FAKE_PASEO_RECORD", recordPath)
+			t.Setenv("FAKE_PASEO_ARCHIVE_STATE", archiveState)
+			t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, agentInspection("agent-123", "idle", cwd)))
+			t.Setenv("FAKE_PASEO_ARCHIVE", "")
+			after := agentInspection("agent-123", "idle", cwd)
+			if tt.afterArchived {
+				after["Archived"] = true
+				after["ArchivedAt"] = "2026-09-07T09:20:00Z"
+			}
+			t.Setenv("FAKE_PASEO_INSPECT_AFTER_ARCHIVE", encodeDirectoryJSON(t, after))
+
+			err := client.ArchiveOwnSession(
+				context.Background(), compatibleTestEnvironment(), workspace, session,
+			)
+			if tt.expected == nil && err != nil {
+				t.Fatalf("подтвердить архивирование через inspect: %v", err)
+			}
+			if tt.expected != nil && !errors.Is(err, tt.expected) {
+				t.Fatalf("ожидалась ошибка %v, получено %v", tt.expected, err)
+			}
+			if tt.expected != nil && !errors.Is(err, ErrEmptyOutput) {
+				t.Fatalf("причина потери ответа не сохранена: %v", err)
+			}
+
+			recorded, readErr := os.ReadFile(recordPath)
+			if readErr != nil {
+				t.Fatalf("прочитать журнал вызовов: %v", readErr)
+			}
+			if strings.Count(string(recorded), "archive\n") != 1 ||
+				strings.Count(string(recorded), "inspect\n") != 2 {
+				t.Fatalf("ожидались одна мутация и два чтения:\n%s", recorded)
+			}
+		})
+	}
+}
+
 func compatibleTestEnvironment() CompatibleEnvironment {
 	return CompatibleEnvironment{
 		serverID: ServerID{value: "server-1"},

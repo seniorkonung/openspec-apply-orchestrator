@@ -33,6 +33,7 @@ var (
 	ErrRunOutcomeUnknown               = errors.New("исход создания сессии Paseo не определён")
 	ErrSessionStillRunning             = errors.New("ход сессии Paseo ещё не завершён")
 	ErrArchiveNotConfirmed             = errors.New("архивирование сессии Paseo не подтверждено")
+	ErrArchiveOutcomeUnknown           = errors.New("исход архивирования сессии Paseo не определён")
 	ErrCorruptSessionOwnership         = errors.New("признаки принадлежности собственной сессии повреждены")
 	ErrSessionIdentityMismatch         = errors.New("inspect вернул другую сессию")
 	ErrSessionWorkingDirectoryMismatch = errors.New("собственная сессия относится к другому рабочему каталогу")

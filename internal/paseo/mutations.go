@@ -2,6 +2,7 @@ package paseo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -189,29 +190,37 @@ func (client *Client) ArchiveOwnSession(
 		return ErrSessionStillRunning
 	}
 
-	output, err := client.runner.run(ctx, command{
+	output, mutationErr := client.runner.run(ctx, command{
 		name: "archive",
 		args: []string{"archive", session.ID().String(), "--json"},
 	})
-	if err != nil {
-		return err
-	}
-	result, err := decodeArchivedSession(output)
-	if err != nil {
-		return err
-	}
-	if result.AgentID.value != session.ID().String() {
-		return ErrSessionIdentityMismatch
+	if mutationErr == nil {
+		result, err := decodeArchivedSession(output)
+		if err != nil {
+			mutationErr = err
+		} else if result.AgentID.value != session.ID().String() {
+			mutationErr = ErrSessionIdentityMismatch
+		}
 	}
 
-	after, err := client.inspectManagedSession(ctx, workspace, session)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrArchiveNotConfirmed, err)
+	after, inspectionErr := client.inspectManagedSession(ctx, workspace, session)
+	if inspectionErr == nil && after.Archived.value {
+		return nil
 	}
-	if !after.Archived.value {
-		return ErrArchiveNotConfirmed
+	if mutationErr != nil {
+		if inspectionErr != nil {
+			return unknownArchiveOutcome(mutationErr, inspectionErr)
+		}
+		return unknownArchiveOutcome(mutationErr, ErrArchiveNotConfirmed)
 	}
-	return nil
+	if inspectionErr != nil {
+		return fmt.Errorf("%w: %w", ErrArchiveNotConfirmed, inspectionErr)
+	}
+	return ErrArchiveNotConfirmed
+}
+
+func unknownArchiveOutcome(causes ...error) error {
+	return fmt.Errorf("%w: %w", ErrArchiveOutcomeUnknown, errors.Join(causes...))
 }
 
 func validateManagedSessionTarget(workspace ActiveWorkspace, session orchestrator.ManagedSession) error {
