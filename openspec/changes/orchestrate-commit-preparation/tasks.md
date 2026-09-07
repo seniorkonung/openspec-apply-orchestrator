@@ -152,6 +152,17 @@
   - **Files likely touched:** `internal/orchestrator/reconcile.go`, `internal/orchestrator/reconcile_test.go`, `internal/orchestrator/session.go`, `internal/orchestrator/session_test.go`, `internal/paseo/reconcile_gateway.go`.
   - **Estimated scope:** M.
 
+- [ ] 2.10 Безопасно завершать сопровождение при ошибке чтения источника
+  - **Acceptance criteria:**
+    - Любая ошибка чтения OpenSpec, Paseo или Git во время сопровождения представляется типизированным препятствием с указанием источника и завершает текущий запуск без ожидания восстановления; отмена и изменившееся после успешного чтения основание остаются отдельными исходами.
+    - Ошибка перед созданием, архивированием или подтверждением результата не допускает мутацию и успех; существующая сессия остаётся доступной, а неуспешное чтение и неопределённая мутация автоматически не повторяются.
+    - Следующий явный запуск выполняет новый preflight и полное чтение OpenSpec, Paseo и Git, после чего восстанавливает видимую сессию либо принимает новое решение только по актуальному наблюдению.
+  - **Verification:**
+    - `go test ./internal/openspec/... ./internal/gitstate/... ./internal/paseo/... ./internal/orchestrator/...` с ошибкой каждого источника при работающей сессии и непосредственно перед созданием и архивированием; проверить ненулевой исход, отсутствие мутаций, сохранение ID сессии и полное повторное чтение в новом запуске.
+  - **Dependencies:** 2.6.
+  - **Files likely touched:** `internal/orchestrator/reconcile.go`, `internal/orchestrator/reconcile_test.go`, `internal/openspec/command.go`, `internal/gitstate/status.go`, `internal/paseo/reconcile_gateway.go`.
+  - **Estimated scope:** M.
+
 - [ ] 2.7 Собрать production-команду одного поручения `prepare-commits`
   - **Acceptance criteria:**
     - `openspec-apply-orchestrator prepare-commits --change <name>` принимает необязательный `--store`, проверяет OpenSpec, Git, конфигурацию, Linux-local среду, lock и совместимость Paseo до первой мутации.
@@ -160,7 +171,7 @@
   - **Verification:**
     - `go test ./cmd/openspec-apply-orchestrator/...` с подменными адаптерами для порядка preflight, аргументов, store, кодов завершения, сигналов и безопасного вывода.
     - `go build ./cmd/openspec-apply-orchestrator`.
-  - **Dependencies:** 2.6.
+  - **Dependencies:** 2.10.
   - **Files likely touched:** Новые `cmd/openspec-apply-orchestrator/main.go`, `cmd/openspec-apply-orchestrator/prepare_commits.go`, `cmd/openspec-apply-orchestrator/prepare_commits_test.go`, `internal/orchestrator/identity.go`, `internal/orchestrator/identity_test.go`.
   - **Estimated scope:** M.
 
@@ -169,6 +180,7 @@
     - Сквозной стенд с настоящими Git, OpenSpec CLI и изолированным Paseo подтверждает выход без агента при чистом дереве и однократную передачу настроек и встроенного поручения при staged, tracked и untracked работе.
     - Остановка CLI во время работы и после создания коммитов сохраняет одну видимую сессию; новый процесс восстанавливает её, а чистый Git приводит к подтверждённому архивированию и успеху без повторного поручения.
     - Грязный Git после завершения хода, ошибка агента и запрос разрешения дают локально видимый код препятствия, сохраняют ту же активную сессию без второго `run` и не удерживают процесс в ожидании её ручного закрытия; повторный запуск сначала находит эту сессию.
+    - Ошибка чтения OpenSpec, Paseo или Git перед созданием либо архивированием завершает текущий процесс без мутации; после восстановления источника следующий явный процесс полностью перечитывает состояние и продолжает ту же видимую сессию либо принимает новое решение без повторения неопределённой мутации.
   - **Verification:**
     - `go test -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...`.
     - Проверить журнал мутаций Paseo, доставленный промпт, ID восстановленной сессии, итоговый Git и коды процессов в каждой точке прерывания.
@@ -178,13 +190,13 @@
 
 - [ ] 2.9 Подтвердить готовность подготовки коммитов к подключению уведомлений
   - **Acceptance criteria:**
-    - Выполнено условие `Ready to advance` Phase 2: различимы отсутствие работы, работа агента, чистый Git и локально видимая потребность в человеке при грязном Git, ошибке агента либо запросе разрешения; восстановление не создаёт повторного поручения.
+    - Выполнено условие `Ready to advance` Phase 2: различимы отсутствие работы, работа агента, чистый Git, ошибка чтения источника и локально видимая потребность в человеке при грязном Git, ошибке агента либо запросе разрешения; восстановление после нового явного запуска не создаёт повторного поручения.
     - Пройдены модульные, race, статические и интеграционные проверки; поведение соответствует спецификациям и не использует прямой протокол Paseo, собственный журнал, исходный снимок или структурированный результат агента.
     - В поставку Phase 2 не попали ntfy, длительное ожидание человека, ручное закрытие переданной сессии, повторная проверка Git после него, обсуждение задач, Apply, ревью, переход к следующей фазе или архивирование change; перед продолжением требуется отдельное планирование Phase 3.
   - **Verification:**
     - `go test ./...`; `go test -race ./...`; `go vet ./...`; `go build ./cmd/openspec-apply-orchestrator`.
     - `go test -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...`.
     - Go MCP diagnostics и vulncheck; `openspec validate orchestrate-commit-preparation --strict --no-interactive`; проверить отсутствие различий после `gofmt`.
-  - **Dependencies:** 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8.
+  - **Dependencies:** 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.10.
   - **Files likely touched:** Нет, только проверка и отметка задачи после успешного выполнения.
   - **Estimated scope:** XS.
