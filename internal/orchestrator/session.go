@@ -8,10 +8,11 @@ import (
 )
 
 const (
-	LabelOwner   = "oa.owner"
-	LabelVersion = "oa.version"
-	LabelChange  = "oa.change"
-	LabelKind    = "oa.kind"
+	LabelOwner     = "oa.owner"
+	LabelVersion   = "oa.version"
+	LabelChange    = "oa.change"
+	LabelKind      = "oa.kind"
+	LabelWorkspace = "oa.workspace"
 
 	ManagedOwner            = "openspec-apply-orchestrator"
 	CurrentOwnershipVersion = "1"
@@ -149,14 +150,21 @@ type validatedSession struct {
 	state   sessionState
 }
 
-func ObserveOwnSessions(expectedChange ChangeKey, rawSessions []UntrustedOwnSession) (OwnSessionObservation, error) {
+func ObserveOwnSessions(
+	expectedChange ChangeKey,
+	expectedWorkspace WorkspaceID,
+	rawSessions []UntrustedOwnSession,
+) (OwnSessionObservation, error) {
 	if expectedChange.value == "" {
 		return nil, fmt.Errorf("%w: пустой доверенный ключ change", ErrInvalidIdentifier)
+	}
+	if expectedWorkspace.value == "" {
+		return nil, fmt.Errorf("%w: пустой доверенный идентификатор workspace", ErrInvalidIdentifier)
 	}
 
 	validated := make([]validatedSession, 0, len(rawSessions))
 	for index, raw := range rawSessions {
-		session, err := validateOwnSession(expectedChange, raw)
+		session, err := validateOwnSession(expectedChange, expectedWorkspace, raw)
 		if err != nil {
 			return nil, fmt.Errorf("сессия %d: %w", index+1, err)
 		}
@@ -177,8 +185,12 @@ func ObserveOwnSessions(expectedChange ChangeKey, rawSessions []UntrustedOwnSess
 	}
 }
 
-func validateOwnSession(expectedChange ChangeKey, raw UntrustedOwnSession) (validatedSession, error) {
-	if err := validateOwnershipLabels(expectedChange, raw.Labels); err != nil {
+func validateOwnSession(
+	expectedChange ChangeKey,
+	expectedWorkspace WorkspaceID,
+	raw UntrustedOwnSession,
+) (validatedSession, error) {
+	if err := validateOwnershipLabels(expectedChange, expectedWorkspace, raw.Labels); err != nil {
 		return validatedSession{}, err
 	}
 
@@ -186,9 +198,8 @@ func validateOwnSession(expectedChange ChangeKey, raw UntrustedOwnSession) (vali
 	if err != nil {
 		return validatedSession{}, err
 	}
-	workspaceID, err := NewWorkspaceID(raw.WorkspaceID)
-	if err != nil {
-		return validatedSession{}, err
+	if raw.WorkspaceID != expectedWorkspace.String() {
+		return validatedSession{}, fmt.Errorf("%w: проверенная сессия относится к другому workspace", ErrInvalidOwnership)
 	}
 
 	state, err := validateSessionState(raw)
@@ -197,12 +208,16 @@ func validateOwnSession(expectedChange ChangeKey, raw UntrustedOwnSession) (vali
 	}
 
 	return validatedSession{
-		session: ManagedSession{id: id, workspaceID: workspaceID, changeKey: expectedChange},
+		session: ManagedSession{id: id, workspaceID: expectedWorkspace, changeKey: expectedChange},
 		state:   state,
 	}, nil
 }
 
-func validateOwnershipLabels(expectedChange ChangeKey, labels map[string]string) error {
+func validateOwnershipLabels(
+	expectedChange ChangeKey,
+	expectedWorkspace WorkspaceID,
+	labels map[string]string,
+) error {
 	if labels[LabelOwner] != ManagedOwner {
 		return fmt.Errorf("%w: метка %s", ErrInvalidOwnership, LabelOwner)
 	}
@@ -220,6 +235,9 @@ func validateOwnershipLabels(expectedChange ChangeKey, labels map[string]string)
 	}
 	if labels[LabelKind] != CommitPreparationKind {
 		return fmt.Errorf("%w: метка %s", ErrInvalidOwnership, LabelKind)
+	}
+	if labels[LabelWorkspace] != expectedWorkspace.String() {
+		return fmt.Errorf("%w: метка %s", ErrInvalidOwnership, LabelWorkspace)
 	}
 	return nil
 }

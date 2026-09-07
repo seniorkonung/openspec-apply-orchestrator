@@ -51,6 +51,7 @@ func TestПустойИдентификаторНеСтановитсяДове�
 
 func TestНаблюдениеСессииИмеетВзаимоисключающиеВарианты(t *testing.T) {
 	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
 
 	tests := []struct {
 		name     string
@@ -118,7 +119,7 @@ func TestНаблюдениеСессииИмеетВзаимоисключаю�
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ObserveOwnSessions(change, tt.sessions)
+			got, err := ObserveOwnSessions(change, workspace, tt.sessions)
 			if err != nil {
 				t.Fatalf("построить наблюдение: %v", err)
 			}
@@ -129,6 +130,7 @@ func TestНаблюдениеСессииИмеетВзаимоисключаю�
 
 func TestНекорректныеМеткиНеСоздаютДоверенноеНаблюдение(t *testing.T) {
 	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
 
 	tests := []struct {
 		name   string
@@ -146,7 +148,7 @@ func TestНекорректныеМеткиНеСоздаютДоверенно�
 			raw := validSession("session-1", "running")
 			tt.mutate(raw.Labels)
 
-			_, err := ObserveOwnSessions(change, []UntrustedOwnSession{raw})
+			_, err := ObserveOwnSessions(change, workspace, []UntrustedOwnSession{raw})
 			if !errors.Is(err, ErrInvalidOwnership) {
 				t.Fatalf("ожидалась ошибка принадлежности, получено %v", err)
 			}
@@ -156,10 +158,11 @@ func TestНекорректныеМеткиНеСоздаютДоверенно�
 
 func TestНеизвестнаяВерсияПринадлежностиОтклоняется(t *testing.T) {
 	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
 	raw := validSession("session-1", "running")
 	raw.Labels[LabelVersion] = "2"
 
-	_, err := ObserveOwnSessions(change, []UntrustedOwnSession{raw})
+	_, err := ObserveOwnSessions(change, workspace, []UntrustedOwnSession{raw})
 	if !errors.Is(err, ErrUnsupportedOwnershipVersion) {
 		t.Fatalf("ожидалась ошибка неизвестной версии, получено %v", err)
 	}
@@ -167,6 +170,7 @@ func TestНеизвестнаяВерсияПринадлежностиОткл�
 
 func TestПротиворечивоеСостояниеОтклоняется(t *testing.T) {
 	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
 
 	tests := []struct {
 		name string
@@ -188,9 +192,50 @@ func TestПротиворечивоеСостояниеОтклоняется(t 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := ObserveOwnSessions(change, []UntrustedOwnSession{tt.raw})
+			_, err := ObserveOwnSessions(change, workspace, []UntrustedOwnSession{tt.raw})
 			if !errors.Is(err, ErrContradictorySessionState) {
 				t.Fatalf("ожидалась ошибка состояния, получено %v", err)
+			}
+		})
+	}
+}
+
+func TestСобственнаяСессияСвязанаСВыбраннымWorkspace(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+
+	tests := []struct {
+		name   string
+		mutate func(*UntrustedOwnSession)
+	}{
+		{
+			name: "метка workspace отсутствует",
+			mutate: func(raw *UntrustedOwnSession) {
+				delete(raw.Labels, LabelWorkspace)
+			},
+		},
+		{
+			name: "метка указывает на другой workspace",
+			mutate: func(raw *UntrustedOwnSession) {
+				raw.Labels[LabelWorkspace] = "workspace-2"
+			},
+		},
+		{
+			name: "проверенная сессия относится к другому workspace",
+			mutate: func(raw *UntrustedOwnSession) {
+				raw.WorkspaceID = "workspace-2"
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := validSession("session-1", "running")
+			tt.mutate(&raw)
+
+			_, err := ObserveOwnSessions(change, workspace, []UntrustedOwnSession{raw})
+			if !errors.Is(err, ErrInvalidOwnership) {
+				t.Fatalf("ожидалась ошибка связи с workspace, получено %v", err)
 			}
 		})
 	}
@@ -202,12 +247,22 @@ func validSession(id, status string) UntrustedOwnSession {
 		WorkspaceID: "workspace-1",
 		Status:      status,
 		Labels: map[string]string{
-			LabelOwner:   ManagedOwner,
-			LabelVersion: CurrentOwnershipVersion,
-			LabelChange:  "orchestrate-commit-preparation",
-			LabelKind:    CommitPreparationKind,
+			LabelOwner:     ManagedOwner,
+			LabelVersion:   CurrentOwnershipVersion,
+			LabelChange:    "orchestrate-commit-preparation",
+			LabelKind:      CommitPreparationKind,
+			LabelWorkspace: "workspace-1",
 		},
 	}
+}
+
+func mustWorkspaceID(t *testing.T, value string) WorkspaceID {
+	t.Helper()
+	id, err := NewWorkspaceID(value)
+	if err != nil {
+		t.Fatalf("создать идентификатор workspace: %v", err)
+	}
+	return id
 }
 
 func withAttention(session UntrustedOwnSession, reason string) UntrustedOwnSession {
