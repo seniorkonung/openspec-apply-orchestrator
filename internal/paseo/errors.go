@@ -28,6 +28,8 @@ var (
 	ErrCurrentIdentity                 = errors.New("не удалось определить локального владельца paseo daemon")
 	ErrInvalidDirectoryQuery           = errors.New("некорректный запрос к каталогу Paseo")
 	ErrInvalidWorkingDirectory         = errors.New("некорректный рабочий каталог")
+	ErrInvalidSessionSettings          = errors.New("некорректные настройки сессии Paseo")
+	ErrInvalidInitialPrompt            = errors.New("некорректный первоначальный промпт")
 	ErrCorruptSessionOwnership         = errors.New("признаки принадлежности собственной сессии повреждены")
 	ErrSessionIdentityMismatch         = errors.New("inspect вернул другую сессию")
 	ErrSessionWorkingDirectoryMismatch = errors.New("собственная сессия относится к другому рабочему каталогу")

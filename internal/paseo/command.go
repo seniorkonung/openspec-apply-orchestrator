@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -30,8 +32,9 @@ func defaultRunnerConfig() runnerConfig {
 }
 
 type command struct {
-	name string
-	args []string
+	name     string
+	args     []string
+	unsetEnv []string
 }
 
 type runner struct {
@@ -77,6 +80,9 @@ func (runner *runner) run(ctx context.Context, command command) ([]byte, error) 
 	// WaitDelay ограничивает ожидание унаследованных каналов вывода.
 	// Источник: https://pkg.go.dev/os/exec#CommandContext
 	cmd := exec.CommandContext(commandCtx, runner.executable, command.args...)
+	if len(command.unsetEnv) > 0 {
+		cmd.Env = environmentWithout(os.Environ(), command.unsetEnv)
+	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.WaitDelay = defaultWaitDelay
@@ -111,6 +117,23 @@ func (runner *runner) run(ctx context.Context, command command) ([]byte, error) 
 	}
 
 	return stdout.bytes(), nil
+}
+
+func environmentWithout(environment, keys []string) []string {
+	filtered := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		remove := false
+		for _, key := range keys {
+			if strings.HasPrefix(entry, key+"=") {
+				remove = true
+				break
+			}
+		}
+		if !remove {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }
 
 type cappedBuffer struct {

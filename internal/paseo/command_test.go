@@ -158,6 +158,10 @@ func newFakeRunner(t *testing.T, config runnerConfig) *runner {
 if [ -n "$FAKE_PASEO_RECORD" ]; then
   printf '%s\n' "$@" >> "$FAKE_PASEO_RECORD"
 fi
+if [ -n "$FAKE_PASEO_ENV_RECORD" ]; then
+  printf 'PASEO_AGENT_ID=%s\n' "${PASEO_AGENT_ID-unset}" >> "$FAKE_PASEO_ENV_RECORD"
+  printf 'PASEO_WORKSPACE_ID=%s\n' "${PASEO_WORKSPACE_ID-unset}" >> "$FAKE_PASEO_ENV_RECORD"
+fi
 stdout="$FAKE_PASEO_STDOUT"
 if [ "$1" = "--version" ]; then
   stdout="${FAKE_PASEO_VERSION-$stdout}"
@@ -167,6 +171,8 @@ elif [ "$1" = "workspace" ] && [ "$2" = "ls" ]; then
   stdout="${FAKE_PASEO_WORKSPACES-$stdout}"
 elif [ "$1" = "workspace" ] && [ "$2" = "create" ]; then
   stdout="${FAKE_PASEO_WORKSPACE_CREATE-$stdout}"
+elif [ "$1" = "run" ]; then
+  stdout="${FAKE_PASEO_RUN-$stdout}"
 elif [ "$1" = "ls" ]; then
   exact=""
   for argument in "$@"; do

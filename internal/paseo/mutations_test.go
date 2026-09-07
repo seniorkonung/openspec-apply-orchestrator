@@ -54,6 +54,76 @@ func TestWorkspaceСоздаётсяСлужебнымИменемИКанони
 	}
 }
 
+func TestСобственнаяСессияСоздаётсяОднойФоновойКомандой(t *testing.T) {
+	cwd := t.TempDir()
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := ActiveWorkspace{
+		id:   mustMutationWorkspaceID(t, "workspace-1"),
+		name: managedWorkspaceName(change),
+		cwd:  cwd,
+	}
+	settings, err := NewSessionSettings("codex", "gpt-5.6", "high", "default")
+	if err != nil {
+		t.Fatalf("создать настройки сессии: %v", err)
+	}
+
+	client := newFakeClient(t)
+	recordPath := filepath.Join(t.TempDir(), "вызовы")
+	environmentPath := filepath.Join(t.TempDir(), "окружение")
+	t.Setenv("FAKE_PASEO_RECORD", recordPath)
+	t.Setenv("FAKE_PASEO_ENV_RECORD", environmentPath)
+	t.Setenv("PASEO_AGENT_ID", "чужой-родитель")
+	t.Setenv("PASEO_WORKSPACE_ID", "чужой-workspace")
+	t.Setenv("FAKE_PASEO_RUN", encodeDirectoryJSON(t, map[string]any{
+		"agentId":  "agent-created",
+		"status":   "running",
+		"provider": "codex",
+		"cwd":      cwd,
+		"title":    "подготовка",
+	}))
+	prompt := "Проверить механизм без изменения репозитория."
+
+	sessionID, err := client.CreateOwnSession(
+		context.Background(), compatibleTestEnvironment(), change, workspace, settings, prompt,
+	)
+	if err != nil {
+		t.Fatalf("создать собственную сессию: %v", err)
+	}
+	if sessionID.String() != "agent-created" {
+		t.Fatalf("неожиданный идентификатор сессии: %q", sessionID)
+	}
+
+	recorded, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatalf("прочитать журнал вызовов: %v", err)
+	}
+	want := strings.Join([]string{
+		"run", "--background",
+		"--workspace", "workspace-1",
+		"--provider", "codex",
+		"--model", "gpt-5.6",
+		"--thinking", "high",
+		"--mode", "default",
+		"--label", "oa.owner=openspec-apply-orchestrator",
+		"--label", "oa.version=1",
+		"--label", "oa.change=orchestrate-commit-preparation",
+		"--label", "oa.kind=commit-preparation",
+		"--label", "oa.workspace=workspace-1",
+		"--json", "--", prompt,
+	}, "\n") + "\n"
+	if string(recorded) != want {
+		t.Fatalf("неожиданные аргументы создания сессии:\n%s", recorded)
+	}
+
+	processEnvironment, err := os.ReadFile(environmentPath)
+	if err != nil {
+		t.Fatalf("прочитать окружение Paseo: %v", err)
+	}
+	if string(processEnvironment) != "PASEO_AGENT_ID=unset\nPASEO_WORKSPACE_ID=unset\n" {
+		t.Fatalf("контекст чужой сессии передан Paseo:\n%s", processEnvironment)
+	}
+}
+
 func compatibleTestEnvironment() CompatibleEnvironment {
 	return CompatibleEnvironment{
 		serverID: ServerID{value: "server-1"},
