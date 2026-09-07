@@ -26,6 +26,8 @@ var (
 	ErrDaemonOwnerMismatch       = errors.New("paseo daemon принадлежит другому пользователю")
 	ErrInvalidServerID           = errors.New("paseo status не содержит допустимый serverId")
 	ErrCurrentIdentity           = errors.New("не удалось определить локального владельца paseo daemon")
+	ErrInvalidDirectoryQuery     = errors.New("некорректный запрос к каталогу Paseo")
+	ErrInvalidWorkingDirectory   = errors.New("некорректный рабочий каталог")
 )
 
 type CommandExitError struct {

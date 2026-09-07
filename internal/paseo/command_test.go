@@ -163,6 +163,8 @@ if [ "$1" = "--version" ]; then
   stdout="${FAKE_PASEO_VERSION-$stdout}"
 elif [ "$1" = "status" ]; then
   stdout="${FAKE_PASEO_STATUS-$stdout}"
+elif [ "$1" = "workspace" ] && [ "$2" = "ls" ]; then
+  stdout="${FAKE_PASEO_WORKSPACES-$stdout}"
 fi
 if [ -n "$stdout" ]; then
   printf '%s' "$stdout"
