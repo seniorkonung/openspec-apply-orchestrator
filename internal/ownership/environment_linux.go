@@ -30,50 +30,51 @@ const (
 type filesystemMagic uint32
 
 func CheckLocalEnvironment(workingRoot, changeRoot string) (LocalEnvironment, error) {
-	canonicalWorkingRoot, err := validateLocalRoot("рабочий корень", workingRoot)
+	canonicalWorkingRoot, _, err := validateLocalRoot("рабочий корень", workingRoot)
 	if err != nil {
 		return LocalEnvironment{}, err
 	}
-	canonicalChangeRoot, err := validateLocalRoot("корень change", changeRoot)
+	canonicalChangeRoot, changeRootInfo, err := validateLocalRoot("корень change", changeRoot)
 	if err != nil {
 		return LocalEnvironment{}, err
 	}
 
 	return LocalEnvironment{
-		workingRoot: canonicalWorkingRoot,
-		changeRoot:  canonicalChangeRoot,
+		workingRoot:    canonicalWorkingRoot,
+		changeRoot:     canonicalChangeRoot,
+		changeRootInfo: changeRootInfo,
 	}, nil
 }
 
-func validateLocalRoot(name, root string) (string, error) {
+func validateLocalRoot(name, root string) (string, os.FileInfo, error) {
 	if root == "" {
-		return "", fmt.Errorf("%w: %s не задан", ErrInvalidRoot, name)
+		return "", nil, fmt.Errorf("%w: %s не задан", ErrInvalidRoot, name)
 	}
 
 	absoluteRoot, err := filepath.Abs(root)
 	if err != nil {
-		return "", fmt.Errorf("%w: определить абсолютный путь %s: %v", ErrInvalidRoot, name, err)
+		return "", nil, fmt.Errorf("%w: определить абсолютный путь %s: %v", ErrInvalidRoot, name, err)
 	}
 	canonicalRoot, err := filepath.EvalSymlinks(absoluteRoot)
 	if err != nil {
-		return "", fmt.Errorf("%w: разрешить %s %q: %v", ErrInvalidRoot, name, absoluteRoot, err)
+		return "", nil, fmt.Errorf("%w: разрешить %s %q: %v", ErrInvalidRoot, name, absoluteRoot, err)
 	}
 	info, err := os.Stat(canonicalRoot)
 	if err != nil {
-		return "", fmt.Errorf("%w: прочитать %s %q: %v", ErrInvalidRoot, name, canonicalRoot, err)
+		return "", nil, fmt.Errorf("%w: прочитать %s %q: %v", ErrInvalidRoot, name, canonicalRoot, err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("%w: %s %q не является каталогом", ErrInvalidRoot, name, canonicalRoot)
+		return "", nil, fmt.Errorf("%w: %s %q не является каталогом", ErrInvalidRoot, name, canonicalRoot)
 	}
 
 	var stats syscall.Statfs_t
 	if err := syscall.Statfs(canonicalRoot, &stats); err != nil {
-		return "", fmt.Errorf("%w: %s %q: %v", ErrFilesystemInspection, name, canonicalRoot, err)
+		return "", nil, fmt.Errorf("%w: %s %q: %v", ErrFilesystemInspection, name, canonicalRoot, err)
 	}
 	if err := validateFilesystem(name, canonicalRoot, filesystemMagic(stats.Type)); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return canonicalRoot, nil
+	return canonicalRoot, info, nil
 }
 
 func validateFilesystem(rootName, root string, magic filesystemMagic) error {
