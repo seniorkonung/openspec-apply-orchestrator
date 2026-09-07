@@ -237,7 +237,7 @@ func TestInspectРазличаетРаботуОжиданиеИЗакрытие
 		},
 		{
 			name:   "запрос разрешения",
-			status: "idle",
+			status: "running",
 			mutate: func(inspect map[string]any) {
 				inspect["PendingPermissions"] = []map[string]any{{"id": "permission-1", "tool": "Bash"}}
 			},

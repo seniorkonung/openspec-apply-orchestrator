@@ -145,6 +145,7 @@ func TestПричинаОжиданияИмеетЗакрытыеТипизир�
 		{name: "ход завершён", status: "idle", reason: "finished", want: SessionTurnFinished},
 		{name: "агент завершился с ошибкой", status: "error", reason: "error", want: SessionAgentError},
 		{name: "агент запросил разрешение", status: "idle", reason: "permission", want: SessionPermissionRequested},
+		{name: "работающий агент запросил разрешение", status: "running", reason: "permission", want: SessionPermissionRequested},
 	}
 
 	for _, tt := range tests {
@@ -215,8 +216,8 @@ func TestПротиворечивоеСостояниеОтклоняется(t 
 		raw  UntrustedOwnSession
 	}{
 		{
-			name: "работающая сессия одновременно требует действия",
-			raw:  withAttention(validSession("session-1", "running"), "permission"),
+			name: "работающая сессия отмечена как завершившая ход",
+			raw:  withAttention(validSession("session-1", "running"), "finished"),
 		},
 		{
 			name: "закрытая сессия одновременно требует действия",

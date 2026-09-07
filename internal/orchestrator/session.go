@@ -260,11 +260,20 @@ func validateSessionState(raw UntrustedOwnSession) (sessionState, SessionAttenti
 	}
 
 	switch raw.Status {
-	case "initializing", "running":
+	case "initializing":
 		if reason != 0 {
-			return 0, 0, fmt.Errorf("%w: работа и потребность в действии", ErrContradictorySessionState)
+			return 0, 0, fmt.Errorf("%w: инициализация и потребность в действии", ErrContradictorySessionState)
 		}
 		return sessionWorking, 0, nil
+	case "running":
+		switch reason {
+		case 0:
+			return sessionWorking, 0, nil
+		case SessionPermissionRequested:
+			return sessionAwaitingAction, reason, nil
+		default:
+			return 0, 0, fmt.Errorf("%w: работа с причиной %q", ErrContradictorySessionState, raw.AttentionReason)
+		}
 	case "idle":
 		if reason != SessionTurnFinished && reason != SessionPermissionRequested {
 			return 0, 0, fmt.Errorf("%w: завершённый ход без допустимой причины ожидания", ErrContradictorySessionState)
