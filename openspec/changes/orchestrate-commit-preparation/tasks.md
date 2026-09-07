@@ -10,7 +10,7 @@
   - **Files likely touched:** Новые `go.mod`, `internal/orchestrator/session.go`, `internal/orchestrator/session_test.go`.
   - **Estimated scope:** S.
 
-- [ ] 1.2 Безопасно вызывать совместимый локальный Paseo CLI и проверять его JSON
+- [x] 1.2 Безопасно вызывать совместимый локальный Paseo CLI и проверять его JSON
   - **Acceptance criteria:**
     - Адаптер запускает найденный в `PATH` исполняемый файл `paseo` через `exec.CommandContext` без shell; до мутаций проверяет версии CLI и daemon, локальность, владельца и `serverId` по `--version` и `status --json`.
     - Каждая поддерживаемая команда имеет отдельную типизированную схему результата; ненулевой код, тайм-аут, отмена, пустой, обрезанный и неожиданный JSON возвращаются как различимые ошибки, а stdout и stderr ограничены по размеру.
