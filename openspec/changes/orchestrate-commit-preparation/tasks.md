@@ -20,7 +20,7 @@
   - **Files likely touched:** Новые `internal/paseo/command.go`, `internal/paseo/command_test.go`, `internal/paseo/json.go`, `internal/paseo/errors.go`.
   - **Estimated scope:** M.
 
-- [ ] 1.3 Находить активный workspace и собственные сессии по проверяемым признакам CLI
+- [x] 1.3 Находить активный workspace и собственные сессии по проверяемым признакам CLI
   - **Acceptance criteria:**
     - `paseo workspace ls --json` используется только для активных workspace; служебное имя из digest ключа change и канонический cwd дают отсутствие или один workspace, а несколько совпадений возвращают неоднозначность без чтения архивных workspace.
     - Активные кандидаты запрашиваются через `paseo ls --global`: широкий набор содержит только метки владельца и change, а точный дополнительно содержит версию, тип и `oa.workspace=<полный-id>`; разница наборов означает повреждённую принадлежность, а `inspect` подтверждает полный ID, cwd, состояние, архивирование, запросы разрешений и отсутствие чужого родителя.
