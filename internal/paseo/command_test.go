@@ -165,6 +165,20 @@ elif [ "$1" = "status" ]; then
   stdout="${FAKE_PASEO_STATUS-$stdout}"
 elif [ "$1" = "workspace" ] && [ "$2" = "ls" ]; then
   stdout="${FAKE_PASEO_WORKSPACES-$stdout}"
+elif [ "$1" = "ls" ]; then
+  exact=""
+  for argument in "$@"; do
+    case "$argument" in
+      oa.workspace=*) exact="yes" ;;
+    esac
+  done
+  if [ -n "$exact" ]; then
+    stdout="${FAKE_PASEO_LS_EXACT-$stdout}"
+  else
+    stdout="${FAKE_PASEO_LS_BROAD-$stdout}"
+  fi
+elif [ "$1" = "inspect" ]; then
+  stdout="${FAKE_PASEO_INSPECT-$stdout}"
 fi
 if [ -n "$stdout" ]; then
   printf '%s' "$stdout"
