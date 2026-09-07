@@ -1,0 +1,298 @@
+//go:build paseo_integration
+
+package testpaseo
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+)
+
+const (
+	PaseoVersion = "0.7.2"
+	ProviderID   = "oa-integration"
+	ModelID      = "deterministic"
+)
+
+const (
+	controlEnvironment = "OA_TESTPASEO_CONTROL"
+	recordEnvironment  = "OA_TESTPASEO_RECORD"
+)
+
+type CLIResult struct {
+	Stdout []byte
+	Stderr []byte
+}
+
+type Harness struct {
+	cliPath     string
+	home        string
+	listen      string
+	host        string
+	workspace   string
+	controlPath string
+	recordPath  string
+}
+
+func Start(t *testing.T) *Harness {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("интеграционный стенд Paseo поддерживается только на Linux")
+	}
+
+	cliPath, err := exec.LookPath("paseo")
+	if err != nil {
+		t.Fatalf("найти установленный paseo: %v", err)
+	}
+	root := moduleRoot(t)
+	home, err := os.MkdirTemp("", "oa-paseo-")
+	if err != nil {
+		t.Fatalf("создать временный каталог Paseo: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(home); err != nil {
+			t.Errorf("удалить временный каталог Paseo: %v", err)
+		}
+	})
+
+	harness := &Harness{
+		cliPath:     cliPath,
+		home:        home,
+		listen:      filepath.Join(home, "daemon.sock"),
+		workspace:   filepath.Join(home, "workspace"),
+		controlPath: filepath.Join(home, "provider.control"),
+		recordPath:  filepath.Join(home, "provider-prompts.jsonl"),
+	}
+	harness.host = "unix://" + harness.listen
+	if err := os.Mkdir(harness.workspace, 0o700); err != nil {
+		t.Fatalf("создать рабочий каталог стенда: %v", err)
+	}
+	providerPath := filepath.Join(home, "test-provider")
+	build := exec.Command("go", "build", "-tags=paseo_integration", "-o", providerPath, "./internal/testpaseo/cmd/provider")
+	build.Dir = root
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("собрать управляемый тестовый провайдер: %v\n%s", err, output)
+	}
+	if err := os.WriteFile(harness.controlPath, []byte("finish\n"), 0o600); err != nil {
+		t.Fatalf("задать поведение тестового провайдера: %v", err)
+	}
+	if err := harness.writeConfig(providerPath); err != nil {
+		t.Fatalf("записать изолированную конфигурацию Paseo: %v", err)
+	}
+
+	setProcessEnvironment(t, harness)
+	result, err := harness.runCLI(
+		"daemon", "start",
+		"--home", harness.home,
+		"--listen", harness.listen,
+		"--no-relay", "--no-mcp", "--no-inject-mcp", "--no-web-ui",
+	)
+	if err != nil {
+		t.Fatalf("запустить изолированный daemon Paseo: %v\nstdout:\n%s\nstderr:\n%s", err, result.Stdout, result.Stderr)
+	}
+	t.Cleanup(func() { harness.stop(t) })
+	harness.waitUntilReady(t)
+	return harness
+}
+
+func (harness *Harness) Workspace() string {
+	return harness.workspace
+}
+
+func (harness *Harness) RunCLI(t *testing.T, args ...string) CLIResult {
+	t.Helper()
+	result, err := harness.runCLI(args...)
+	if err != nil {
+		t.Fatalf("выполнить paseo %s: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, result.Stdout, result.Stderr)
+	}
+	return result
+}
+
+func (harness *Harness) Restart(t *testing.T) {
+	t.Helper()
+	result, err := harness.runCLI(
+		"daemon", "restart",
+		"--home", harness.home,
+		"--listen", harness.listen,
+		"--no-relay", "--no-mcp", "--no-inject-mcp", "--no-web-ui", "--json",
+	)
+	if err != nil {
+		t.Fatalf("перезапустить изолированный daemon Paseo: %v\nstdout:\n%s\nstderr:\n%s", err, result.Stdout, result.Stderr)
+	}
+	harness.waitUntilReady(t)
+}
+
+func (harness *Harness) Prompts(t *testing.T) []string {
+	t.Helper()
+	output, err := os.ReadFile(harness.recordPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("прочитать поручения тестового провайдера: %v", err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(output), []byte{'\n'})
+	prompts := make([]string, 0, len(lines))
+	for index, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		var record struct {
+			Prompt string `json:"prompt"`
+		}
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatalf("прочитать запись поручения %d: %v", index+1, err)
+		}
+		prompts = append(prompts, record.Prompt)
+	}
+	return prompts
+}
+
+func (harness *Harness) writeConfig(providerPath string) error {
+	config := map[string]any{
+		"version": 1,
+		"daemon": map[string]any{
+			"listen": harness.listen,
+			"mcp": map[string]any{
+				"enabled":          false,
+				"injectIntoAgents": false,
+			},
+			"relay": map[string]any{"enabled": false},
+		},
+		"agents": map[string]any{
+			"providers": map[string]any{
+				ProviderID: map[string]any{
+					"extends": "acp",
+					"label":   "OpenSpec Apply integration provider",
+					"command": []string{providerPath},
+					"env": map[string]string{
+						controlEnvironment: harness.controlPath,
+						recordEnvironment:  harness.recordPath,
+					},
+					"models": []map[string]any{{
+						"id": ModelID, "label": "Deterministic", "isDefault": true,
+					}},
+				},
+			},
+		},
+	}
+	encoded, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("собрать JSON: %w", err)
+	}
+	encoded = append(encoded, '\n')
+	if err := os.WriteFile(filepath.Join(harness.home, "config.json"), encoded, 0o600); err != nil {
+		return fmt.Errorf("записать JSON: %w", err)
+	}
+	return nil
+}
+
+func (harness *Harness) waitUntilReady(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var lastResult CLIResult
+	var lastErr error
+	for {
+		lastResult, lastErr = harness.runCLI("status", "--home", harness.home, "--json")
+		if lastErr == nil {
+			var status struct {
+				LocalDaemon     string  `json:"localDaemon"`
+				ConnectedDaemon string  `json:"connectedDaemon"`
+				CLIVersion      string  `json:"cliVersion"`
+				DaemonVersion   *string `json:"daemonVersion"`
+			}
+			if json.Unmarshal(lastResult.Stdout, &status) == nil &&
+				status.LocalDaemon == "running" && status.ConnectedDaemon == "reachable" &&
+				status.CLIVersion == PaseoVersion && status.DaemonVersion != nil &&
+				*status.DaemonVersion == PaseoVersion {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf(
+				"изолированный daemon Paseo не готов: %v\nstdout:\n%s\nstderr:\n%s",
+				lastErr, lastResult.Stdout, lastResult.Stderr,
+			)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func (harness *Harness) stop(t *testing.T) {
+	t.Helper()
+	result, err := harness.runCLI(
+		"daemon", "stop", "--home", harness.home,
+		"--timeout", "3", "--kill-timeout", "2", "--force", "--json",
+	)
+	if err != nil {
+		t.Errorf("остановить изолированный daemon Paseo: %v\nstdout:\n%s\nstderr:\n%s", err, result.Stdout, result.Stderr)
+	}
+}
+
+func (harness *Harness) runCLI(args ...string) (CLIResult, error) {
+	command := exec.Command(harness.cliPath, args...)
+	command.Env = harness.environment()
+	command.Dir = harness.workspace
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	err := command.Run()
+	return CLIResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}, err
+}
+
+func (harness *Harness) environment() []string {
+	environment := removeEnvironment(
+		os.Environ(),
+		"PASEO_HOME", "PASEO_HOST", "PASEO_LISTEN", "PASEO_AGENT_ID", "PASEO_WORKSPACE_ID",
+	)
+	return append(
+		environment,
+		"PASEO_HOME="+harness.home,
+		"PASEO_HOST="+harness.host,
+		"PASEO_LISTEN="+harness.listen,
+	)
+}
+
+func setProcessEnvironment(t *testing.T, harness *Harness) {
+	t.Helper()
+	t.Setenv("PASEO_HOME", harness.home)
+	t.Setenv("PASEO_HOST", harness.host)
+	t.Setenv("PASEO_LISTEN", harness.listen)
+	t.Setenv("PASEO_AGENT_ID", "")
+	t.Setenv("PASEO_WORKSPACE_ID", "")
+}
+
+func removeEnvironment(environment []string, names ...string) []string {
+	removed := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		removed[name] = struct{}{}
+	}
+	filtered := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		name, _, _ := strings.Cut(entry, "=")
+		if _, found := removed[name]; !found {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("не определить путь исходного файла стенда")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", ".."))
+}
