@@ -137,24 +137,30 @@ func (client *Client) CreateOwnSession(
 		unsetEnv: []string{"PASEO_AGENT_ID", "PASEO_WORKSPACE_ID"},
 	})
 	if err != nil {
-		return orchestrator.SessionID{}, err
+		return orchestrator.SessionID{}, unknownRunOutcome(err)
 	}
 	result, err := decodeCreatedSession(output)
 	if err != nil {
-		return orchestrator.SessionID{}, err
+		return orchestrator.SessionID{}, unknownRunOutcome(err)
 	}
 	actualCWD, err := canonicalDirectory(result.CWD.value)
 	if err != nil {
-		return orchestrator.SessionID{}, err
+		return orchestrator.SessionID{}, unknownRunOutcome(err)
 	}
 	if actualCWD != workspace.cwd {
-		return orchestrator.SessionID{}, ErrSessionWorkingDirectoryMismatch
+		return orchestrator.SessionID{}, unknownRunOutcome(ErrSessionWorkingDirectoryMismatch)
 	}
 	id, err := orchestrator.NewSessionID(result.AgentID.value)
 	if err != nil {
-		return orchestrator.SessionID{}, fmt.Errorf("%w: созданная сессия содержит некорректный ID", ErrUnexpectedJSON)
+		return orchestrator.SessionID{}, unknownRunOutcome(
+			fmt.Errorf("%w: созданная сессия содержит некорректный ID", ErrUnexpectedJSON),
+		)
 	}
 	return id, nil
+}
+
+func unknownRunOutcome(cause error) error {
+	return fmt.Errorf("%w: %w", ErrRunOutcomeUnknown, cause)
 }
 
 func ownSessionLabels(change orchestrator.ChangeKey, workspace orchestrator.WorkspaceID) []labelFilter {

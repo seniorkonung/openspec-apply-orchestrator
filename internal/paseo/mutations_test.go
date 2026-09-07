@@ -2,6 +2,7 @@ package paseo
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,6 +122,42 @@ func TestСобственнаяСессияСоздаётсяОднойФоно�
 	}
 	if string(processEnvironment) != "PASEO_AGENT_ID=unset\nPASEO_WORKSPACE_ID=unset\n" {
 		t.Fatalf("контекст чужой сессии передан Paseo:\n%s", processEnvironment)
+	}
+}
+
+func TestПотерянныйОтветRunДаётНеопределённыйИсходБезПовтора(t *testing.T) {
+	cwd := t.TempDir()
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := ActiveWorkspace{
+		id:   mustMutationWorkspaceID(t, "workspace-1"),
+		name: managedWorkspaceName(change),
+		cwd:  cwd,
+	}
+	settings, err := NewSessionSettings("codex", "gpt-5.6", "", "")
+	if err != nil {
+		t.Fatalf("создать настройки сессии: %v", err)
+	}
+	client := newFakeClient(t)
+	recordPath := filepath.Join(t.TempDir(), "вызовы")
+	t.Setenv("FAKE_PASEO_RECORD", recordPath)
+	t.Setenv("FAKE_PASEO_RUN", "")
+
+	_, err = client.CreateOwnSession(
+		context.Background(), compatibleTestEnvironment(), change, workspace, settings, "Проверить механизм.",
+	)
+	if !errors.Is(err, ErrRunOutcomeUnknown) {
+		t.Fatalf("ожидался неопределённый исход run, получено %v", err)
+	}
+	if !errors.Is(err, ErrEmptyOutput) {
+		t.Fatalf("причина потери ответа не сохранена: %v", err)
+	}
+
+	recorded, readErr := os.ReadFile(recordPath)
+	if readErr != nil {
+		t.Fatalf("прочитать журнал вызовов: %v", readErr)
+	}
+	if strings.Count(string(recorded), "run\n") != 1 {
+		t.Fatalf("run должен вызываться ровно один раз:\n%s", recorded)
 	}
 }
 
