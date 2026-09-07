@@ -161,6 +161,82 @@ func TestПотерянныйОтветRunДаётНеопределённыйИ
 	}
 }
 
+func TestСессияАрхивируетсяБезForceИПодтверждаетсяInspect(t *testing.T) {
+	cwd := t.TempDir()
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := ActiveWorkspace{
+		id:   mustMutationWorkspaceID(t, "workspace-1"),
+		name: managedWorkspaceName(change),
+		cwd:  cwd,
+	}
+	session := mustMutationManagedSession(t, "agent-123", change, workspace.id)
+	client := newFakeClient(t)
+	recordPath := filepath.Join(t.TempDir(), "вызовы")
+	archiveState := filepath.Join(t.TempDir(), "архивировано")
+	t.Setenv("FAKE_PASEO_RECORD", recordPath)
+	t.Setenv("FAKE_PASEO_ARCHIVE_STATE", archiveState)
+	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, agentInspection("agent-123", "idle", cwd)))
+	t.Setenv("FAKE_PASEO_ARCHIVE", encodeDirectoryJSON(t, map[string]any{
+		"agentId":    "agent-123",
+		"status":     "archived",
+		"archivedAt": "2026-09-07T09:20:00Z",
+	}))
+	archived := agentInspection("agent-123", "idle", cwd)
+	archived["Archived"] = true
+	archived["ArchivedAt"] = "2026-09-07T09:20:00Z"
+	t.Setenv("FAKE_PASEO_INSPECT_AFTER_ARCHIVE", encodeDirectoryJSON(t, archived))
+
+	if err := client.ArchiveOwnSession(
+		context.Background(), compatibleTestEnvironment(), workspace, session,
+	); err != nil {
+		t.Fatalf("архивировать собственную сессию: %v", err)
+	}
+
+	recorded, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatalf("прочитать журнал вызовов: %v", err)
+	}
+	want := strings.Join([]string{
+		"inspect", "agent-123", "--json",
+		"archive", "agent-123", "--json",
+		"inspect", "agent-123", "--json",
+	}, "\n") + "\n"
+	if string(recorded) != want {
+		t.Fatalf("неожиданная последовательность архивирования:\n%s", recorded)
+	}
+	if strings.Contains(string(recorded), "--force") {
+		t.Fatal("архивирование не должно использовать --force")
+	}
+}
+
+func TestРаботающаяСессияНеАрхивируется(t *testing.T) {
+	cwd := t.TempDir()
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := ActiveWorkspace{
+		id:   mustMutationWorkspaceID(t, "workspace-1"),
+		name: managedWorkspaceName(change),
+		cwd:  cwd,
+	}
+	session := mustMutationManagedSession(t, "agent-123", change, workspace.id)
+	client := newFakeClient(t)
+	recordPath := filepath.Join(t.TempDir(), "вызовы")
+	t.Setenv("FAKE_PASEO_RECORD", recordPath)
+	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, agentInspection("agent-123", "running", cwd)))
+
+	err := client.ArchiveOwnSession(context.Background(), compatibleTestEnvironment(), workspace, session)
+	if !errors.Is(err, ErrSessionStillRunning) {
+		t.Fatalf("ожидался отказ архивировать работающую сессию, получено %v", err)
+	}
+
+	recorded, readErr := os.ReadFile(recordPath)
+	if readErr != nil {
+		t.Fatalf("прочитать журнал вызовов: %v", readErr)
+	}
+	if string(recorded) != "inspect\nagent-123\n--json\n" {
+		t.Fatalf("после работающей сессии выполнена мутация:\n%s", recorded)
+	}
+}
+
 func compatibleTestEnvironment() CompatibleEnvironment {
 	return CompatibleEnvironment{
 		serverID: ServerID{value: "server-1"},
@@ -175,4 +251,28 @@ func mustMutationWorkspaceID(t *testing.T, value string) orchestrator.WorkspaceI
 		t.Fatalf("создать идентификатор workspace: %v", err)
 	}
 	return id
+}
+
+func mustMutationManagedSession(
+	t *testing.T,
+	idValue string,
+	change orchestrator.ChangeKey,
+	workspace orchestrator.WorkspaceID,
+) orchestrator.ManagedSession {
+	t.Helper()
+	id, err := orchestrator.NewSessionID(idValue)
+	if err != nil {
+		t.Fatalf("создать идентификатор сессии: %v", err)
+	}
+	observation, err := orchestrator.ObserveOwnSessions(change, workspace, []orchestrator.UntrustedOwnSession{
+		untrustedOwnSession(id, "idle", false, change, workspace),
+	})
+	if err != nil {
+		t.Fatalf("проверить собственную сессию: %v", err)
+	}
+	waiting, ok := observation.(orchestrator.OwnSessionAwaitingAction)
+	if !ok {
+		t.Fatalf("ожидалась неработающая сессия, получено %T", observation)
+	}
+	return waiting.Session
 }

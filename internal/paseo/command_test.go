@@ -173,6 +173,11 @@ elif [ "$1" = "workspace" ] && [ "$2" = "create" ]; then
   stdout="${FAKE_PASEO_WORKSPACE_CREATE-$stdout}"
 elif [ "$1" = "run" ]; then
   stdout="${FAKE_PASEO_RUN-$stdout}"
+elif [ "$1" = "archive" ]; then
+  stdout="${FAKE_PASEO_ARCHIVE-$stdout}"
+  if [ -n "$FAKE_PASEO_ARCHIVE_STATE" ]; then
+    : > "$FAKE_PASEO_ARCHIVE_STATE"
+  fi
 elif [ "$1" = "ls" ]; then
   exact=""
   for argument in "$@"; do
@@ -186,7 +191,11 @@ elif [ "$1" = "ls" ]; then
     stdout="${FAKE_PASEO_LS_BROAD-$stdout}"
   fi
 elif [ "$1" = "inspect" ]; then
-  stdout="${FAKE_PASEO_INSPECT-$stdout}"
+  if [ -n "$FAKE_PASEO_ARCHIVE_STATE" ] && [ -e "$FAKE_PASEO_ARCHIVE_STATE" ]; then
+    stdout="${FAKE_PASEO_INSPECT_AFTER_ARCHIVE-$stdout}"
+  else
+    stdout="${FAKE_PASEO_INSPECT-$stdout}"
+  fi
 fi
 if [ -n "$stdout" ]; then
   printf '%s' "$stdout"

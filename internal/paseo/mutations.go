@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
 )
@@ -163,6 +164,89 @@ func unknownRunOutcome(cause error) error {
 	return fmt.Errorf("%w: %w", ErrRunOutcomeUnknown, cause)
 }
 
+func (client *Client) ArchiveOwnSession(
+	ctx context.Context,
+	environment CompatibleEnvironment,
+	workspace ActiveWorkspace,
+	session orchestrator.ManagedSession,
+) error {
+	if err := validateCompatibleEnvironment(environment); err != nil {
+		return err
+	}
+	if err := validateManagedSessionTarget(workspace, session); err != nil {
+		return err
+	}
+
+	before, err := client.inspectManagedSession(ctx, workspace, session)
+	if err != nil {
+		return err
+	}
+	if before.Archived.value {
+		return nil
+	}
+	if before.Status.value == "initializing" || before.Status.value == "running" ||
+		len(before.PendingPermissions.value) > 0 {
+		return ErrSessionStillRunning
+	}
+
+	output, err := client.runner.run(ctx, command{
+		name: "archive",
+		args: []string{"archive", session.ID().String(), "--json"},
+	})
+	if err != nil {
+		return err
+	}
+	result, err := decodeArchivedSession(output)
+	if err != nil {
+		return err
+	}
+	if result.AgentID.value != session.ID().String() {
+		return ErrSessionIdentityMismatch
+	}
+
+	after, err := client.inspectManagedSession(ctx, workspace, session)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrArchiveNotConfirmed, err)
+	}
+	if !after.Archived.value {
+		return ErrArchiveNotConfirmed
+	}
+	return nil
+}
+
+func validateManagedSessionTarget(workspace ActiveWorkspace, session orchestrator.ManagedSession) error {
+	if workspace.id.String() == "" || session.ID().String() == "" ||
+		session.WorkspaceID() != workspace.id || session.ChangeKey().String() == "" ||
+		workspace.name != managedWorkspaceName(session.ChangeKey()) || workspace.cwd == "" {
+		return ErrInvalidDirectoryQuery
+	}
+	canonicalCWD, err := canonicalDirectory(workspace.cwd)
+	if err != nil {
+		return err
+	}
+	if canonicalCWD != workspace.cwd {
+		return ErrInvalidWorkingDirectory
+	}
+	return nil
+}
+
+func (client *Client) inspectManagedSession(
+	ctx context.Context,
+	workspace ActiveWorkspace,
+	session orchestrator.ManagedSession,
+) (agentInspectionJSON, error) {
+	inspection, err := client.inspectAgent(ctx, session.ID())
+	if err != nil {
+		return agentInspectionJSON{}, err
+	}
+	if _, err := inspection.toUntrustedSession(
+		session.ID(), session.ChangeKey(), session.WorkspaceID(), workspace.cwd,
+	); err != nil {
+		return agentInspectionJSON{}, err
+	}
+	return inspection, nil
+}
+
 func ownSessionLabels(change orchestrator.ChangeKey, workspace orchestrator.WorkspaceID) []labelFilter {
 	return []labelFilter{
 		{key: orchestrator.LabelOwner, value: orchestrator.ManagedOwner},
@@ -197,6 +281,31 @@ type createdSessionJSON struct {
 	Provider requiredValue[string] `json:"provider"`
 	CWD      requiredValue[string] `json:"cwd"`
 	Title    requiredValue[string] `json:"title"`
+}
+
+// Схема соответствует JSON команды archive Paseo CLI 0.7.2.
+// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/agent/archive.ts
+type archivedSessionJSON struct {
+	AgentID    requiredValue[string] `json:"agentId"`
+	Status     requiredValue[string] `json:"status"`
+	ArchivedAt requiredValue[string] `json:"archivedAt"`
+}
+
+func decodeArchivedSession(output []byte) (archivedSessionJSON, error) {
+	var session archivedSessionJSON
+	if err := decodeStrictJSON(output, &session); err != nil {
+		return archivedSessionJSON{}, err
+	}
+	if !session.AgentID.present || !session.Status.present || !session.ArchivedAt.present {
+		return archivedSessionJSON{}, fmt.Errorf("%w: archive не содержит обязательное поле", ErrUnexpectedJSON)
+	}
+	if !validIdentifierValue(session.AgentID.value) || session.Status.value != "archived" {
+		return archivedSessionJSON{}, fmt.Errorf("%w: archive содержит некорректное поле", ErrUnexpectedJSON)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, session.ArchivedAt.value); err != nil {
+		return archivedSessionJSON{}, fmt.Errorf("%w: archive содержит некорректное время", ErrUnexpectedJSON)
+	}
+	return session, nil
 }
 
 func decodeCreatedSession(output []byte) (createdSessionJSON, error) {

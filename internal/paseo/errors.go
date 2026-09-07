@@ -31,6 +31,8 @@ var (
 	ErrInvalidSessionSettings          = errors.New("некорректные настройки сессии Paseo")
 	ErrInvalidInitialPrompt            = errors.New("некорректный первоначальный промпт")
 	ErrRunOutcomeUnknown               = errors.New("исход создания сессии Paseo не определён")
+	ErrSessionStillRunning             = errors.New("ход сессии Paseo ещё не завершён")
+	ErrArchiveNotConfirmed             = errors.New("архивирование сессии Paseo не подтверждено")
 	ErrCorruptSessionOwnership         = errors.New("признаки принадлежности собственной сессии повреждены")
 	ErrSessionIdentityMismatch         = errors.New("inspect вернул другую сессию")
 	ErrSessionWorkingDirectoryMismatch = errors.New("собственная сессия относится к другому рабочему каталогу")
