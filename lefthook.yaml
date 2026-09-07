@@ -1,0 +1,15 @@
+# pre-push:
+#   jobs:
+#     - run: test
+
+pre-commit:
+  jobs:
+    - name: OpenSpec commit scope
+      run: |
+        if printf '%s\n' {staged_files} | grep -E '^openspec/' | grep -Ev '^openspec/(.*/)?tasks\.md$' | grep -q . &&
+           printf '%s\n' {staged_files} | grep -Ev '^(openspec/.*|.*\.(md|mdx|markdown|rst|adoc|txt))$' | grep -q .; then
+          echo "OpenSpec changes cannot be mixed with other files in the same commit."
+          exit 1
+        fi
+    # - run: fmt
+    #   stage_fixed: true
