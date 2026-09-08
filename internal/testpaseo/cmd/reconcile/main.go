@@ -96,7 +96,7 @@ func execute(ctx context.Context, request input) testpaseo.DriverResult {
 		}
 	case testpaseo.DriverObserve:
 	case testpaseo.DriverReconcile:
-		reconciler, err := orchestrator.NewPhaseOneReconciler(gateway, orchestrator.SystemClock{}, 100*time.Millisecond)
+		reconciler, err := orchestrator.NewPhaseOneReconciler(gateway)
 		if err != nil {
 			return failed(result, err)
 		}
@@ -145,7 +145,8 @@ func startOne(
 	if _, absent := sessions.(orchestrator.NoActiveOwnSession); !absent {
 		return nil
 	}
-	return gateway.CreateOwnSession(ctx, change, workspace, cwd)
+	_, err = gateway.CreateOwnSession(ctx, change, workspace, cwd)
+	return err
 }
 
 func oneWorkspace(
@@ -216,7 +217,7 @@ func (gateway *phaseOneGateway) CreateOwnSession(
 	change orchestrator.ChangeKey,
 	workspace orchestrator.WorkspaceID,
 	cwd string,
-) error {
+) (orchestrator.SessionID, error) {
 	return gateway.CreateOwnSessionForIntegration(
 		ctx,
 		change,

@@ -36,6 +36,17 @@ var fullAccessCompatibility = map[compatibilityKey]fullAccessMode{
 	},
 }
 
+var supplementalFullAccessMode = func(compatibilityKey) (fullAccessMode, bool) {
+	return fullAccessMode{}, false
+}
+
+func compatibleFullAccessMode(key compatibilityKey) (fullAccessMode, bool) {
+	if mode, supported := fullAccessCompatibility[key]; supported {
+		return mode, true
+	}
+	return supplementalFullAccessMode(key)
+}
+
 type VerifiedSessionSettings struct {
 	provider     string
 	model        string
@@ -79,10 +90,10 @@ func validateVerifiedSessionSettings(
 		(!settings.hasReasoning && settings.reasoning != "") {
 		return ErrInvalidSessionSettings
 	}
-	expectedMode, supported := fullAccessCompatibility[compatibilityKey{
+	expectedMode, supported := compatibleFullAccessMode(compatibilityKey{
 		version:  environment.Version().String(),
 		provider: settings.provider,
-	}]
+	})
 	if !supported || settings.mode != expectedMode {
 		return ErrInvalidSessionSettings
 	}
@@ -117,10 +128,10 @@ func (client *Client) VerifySessionSettings(
 	if !exists {
 		return VerifiedSessionSettings{}, fmt.Errorf("%w: %q", ErrProviderNotFound, provider)
 	}
-	mode, supported := fullAccessCompatibility[compatibilityKey{
+	mode, supported := compatibleFullAccessMode(compatibilityKey{
 		version:  environment.Version().String(),
 		provider: provider,
-	}]
+	})
 	if !supported {
 		return VerifiedSessionSettings{}, fmt.Errorf("%w: %q", ErrUnsupportedProvider, provider)
 	}

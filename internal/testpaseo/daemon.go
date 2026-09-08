@@ -17,9 +17,11 @@ import (
 )
 
 const (
-	PaseoVersion = "0.7.2"
-	ProviderID   = "oa-integration"
-	ModelID      = "deterministic"
+	PaseoVersion      = "0.7.2"
+	ProviderID        = "oa-integration"
+	ProfileProviderID = "oa-profile"
+	ModelID           = "deterministic"
+	ModeID            = "integration-unrestricted"
 )
 
 const (
@@ -35,10 +37,12 @@ type CLIResult struct {
 type Behavior string
 
 const (
-	BehaviorWorking    Behavior = "working"
-	BehaviorFinish     Behavior = "finish"
-	BehaviorPermission Behavior = "permission"
-	BehaviorError      Behavior = "error"
+	BehaviorWorking       Behavior = "working"
+	BehaviorFinish        Behavior = "finish"
+	BehaviorCommit        Behavior = "commit"
+	BehaviorCommitAndWork Behavior = "commit-and-work"
+	BehaviorPermission    Behavior = "permission"
+	BehaviorError         Behavior = "error"
 )
 
 type DriverOperation string
@@ -109,6 +113,8 @@ type Harness struct {
 	driverPath  string
 	proxyPath   string
 	mutationLog string
+	commandLog  string
+	faultPath   string
 }
 
 func Start(t *testing.T) *Harness {
@@ -143,6 +149,8 @@ func Start(t *testing.T) *Harness {
 		driverPath:  filepath.Join(home, "reconcile-driver"),
 		proxyPath:   filepath.Join(home, "proxy-bin", "paseo"),
 		mutationLog: filepath.Join(home, "intercepted-mutations.log"),
+		commandLog:  filepath.Join(home, "commands.jsonl"),
+		faultPath:   filepath.Join(home, "proxy.fault"),
 	}
 	harness.host = "unix://" + harness.listen
 	for _, directory := range []string{harness.workspace, harness.changeRoot} {
@@ -174,6 +182,7 @@ func Start(t *testing.T) *Harness {
 	}
 	t.Cleanup(func() { harness.stop(t) })
 	harness.waitUntilReady(t)
+	harness.waitUntilProvidersReady(t)
 	return harness
 }
 
@@ -184,7 +193,7 @@ func (harness *Harness) Workspace() string {
 func (harness *Harness) SetBehavior(t *testing.T, behavior Behavior) {
 	t.Helper()
 	switch behavior {
-	case BehaviorWorking, BehaviorFinish, BehaviorPermission, BehaviorError:
+	case BehaviorWorking, BehaviorFinish, BehaviorCommit, BehaviorCommitAndWork, BehaviorPermission, BehaviorError:
 	default:
 		t.Fatalf("неизвестное поведение тестового провайдера: %q", behavior)
 	}
@@ -204,7 +213,57 @@ func (harness *Harness) InterceptRunOutput(t *testing.T) {
 	}
 	t.Setenv("OA_TESTPASEO_REAL_CLI", harness.cliPath)
 	t.Setenv("OA_TESTPASEO_MUTATION_LOG", harness.mutationLog)
+	t.Setenv("OA_TESTPASEO_DROP_RUN_OUTPUT", "1")
 	t.Setenv("PATH", filepath.Dir(harness.proxyPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func (harness *Harness) EnableCommandRecording(t *testing.T) {
+	t.Helper()
+	harness.ResetCommandRecording(t)
+	t.Setenv("OA_TESTPASEO_REAL_CLI", harness.cliPath)
+	t.Setenv("OA_TESTPASEO_COMMAND_LOG", harness.commandLog)
+	t.Setenv("OA_TESTPASEO_DROP_RUN_OUTPUT", "")
+	t.Setenv("OA_TESTPASEO_FAULT_FILE", harness.faultPath)
+	t.Setenv("PATH", filepath.Dir(harness.proxyPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func (harness *Harness) ResetCommandRecording(t *testing.T) {
+	t.Helper()
+	if err := os.WriteFile(harness.commandLog, nil, 0o600); err != nil {
+		t.Fatalf("очистить журнал команд Paseo: %v", err)
+	}
+}
+
+func (harness *Harness) SetCommandFault(t *testing.T, fault string) {
+	t.Helper()
+	switch fault {
+	case "", "provider-ls-invalid-json", "wait-wrong-id", "workspace-ls-error":
+	default:
+		t.Fatalf("неизвестный сбой прокси Paseo: %q", fault)
+	}
+	if err := os.WriteFile(harness.faultPath, []byte(fault), 0o600); err != nil {
+		t.Fatalf("записать управляемый сбой прокси Paseo: %v", err)
+	}
+}
+
+func (harness *Harness) RecordedCommands(t *testing.T) [][]string {
+	t.Helper()
+	content, err := os.ReadFile(harness.commandLog)
+	if err != nil {
+		t.Fatalf("прочитать журнал команд Paseo: %v", err)
+	}
+	commands := make([][]string, 0)
+	for index, line := range bytes.Split(bytes.TrimSpace(content), []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		var arguments []string
+		if err := json.Unmarshal(line, &arguments); err != nil {
+			t.Fatalf("прочитать команду Paseo %d: %v", index+1, err)
+		}
+		commands = append(commands, arguments)
+	}
+	return commands
 }
 
 func (harness *Harness) InterceptedRunCount(t *testing.T) int {
@@ -358,6 +417,18 @@ func (harness *Harness) writeConfig(providerPath string) error {
 						"id": ModelID, "label": "Deterministic", "isDefault": true,
 					}},
 				},
+				ProfileProviderID: map[string]any{
+					"extends": "acp",
+					"label":   "OpenSpec Apply unsupported profile",
+					"command": []string{providerPath},
+					"env": map[string]string{
+						controlEnvironment: harness.controlPath,
+						recordEnvironment:  harness.recordPath,
+					},
+					"models": []map[string]any{{
+						"id": ModelID, "label": "Deterministic", "isDefault": true,
+					}},
+				},
 			},
 		},
 	}
@@ -403,6 +474,51 @@ func (harness *Harness) waitUntilReady(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+func (harness *Harness) waitUntilProvidersReady(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var lastResult CLIResult
+	var lastErr error
+	for {
+		lastResult, lastErr = harness.runCLI("provider", "ls", "--json")
+		if lastErr == nil {
+			var providers []struct {
+				Provider string `json:"provider"`
+				Status   string `json:"status"`
+			}
+			if json.Unmarshal(lastResult.Stdout, &providers) == nil &&
+				providersAvailable(providers, ProviderID, ProfileProviderID) {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf(
+				"тестовые провайдеры Paseo не готовы: %v\nstdout:\n%s\nstderr:\n%s",
+				lastErr, lastResult.Stdout, lastResult.Stderr,
+			)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func providersAvailable(providers []struct {
+	Provider string `json:"provider"`
+	Status   string `json:"status"`
+}, expected ...string) bool {
+	available := make(map[string]bool, len(providers))
+	for _, provider := range providers {
+		available[provider.Provider] = provider.Status == "available"
+	}
+	for _, provider := range expected {
+		if !available[provider] {
+			return false
+		}
+	}
+	return true
 }
 
 func (harness *Harness) stop(t *testing.T) {

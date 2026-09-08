@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -53,8 +54,9 @@ func RunProvider(input io.Reader, output io.Writer, args []string) error {
 }
 
 type providerServer struct {
-	output  io.Writer
-	session int
+	output      io.Writer
+	session     int
+	directories map[string]string
 }
 
 func (provider *providerServer) handle(message rpcMessage) error {
@@ -71,9 +73,26 @@ func (provider *providerServer) handle(message rpcMessage) error {
 		})
 	case "session/new":
 		provider.session++
-		return provider.respond(message.ID, map[string]string{
-			"sessionId": fmt.Sprintf("oa-integration-%d-%d", os.Getpid(), provider.session),
+		directory, err := decodeSessionDirectory(message.Params)
+		if err != nil {
+			return err
+		}
+		if provider.directories == nil {
+			provider.directories = make(map[string]string)
+		}
+		sessionID := fmt.Sprintf("oa-integration-%d-%d", os.Getpid(), provider.session)
+		provider.directories[sessionID] = directory
+		return provider.respond(message.ID, map[string]any{
+			"sessionId": sessionID,
+			"modes": map[string]any{
+				"currentModeId": ModeID,
+				"availableModes": []map[string]string{{
+					"id": ModeID, "name": "Integration unrestricted",
+				}},
+			},
 		})
+	case "session/set_mode":
+		return provider.setMode(message)
 	case "session/prompt":
 		sessionID, prompt, err := decodePrompt(message.Params)
 		if err != nil {
@@ -92,6 +111,7 @@ func (provider *providerServer) handle(message rpcMessage) error {
 
 func (provider *providerServer) runPrompt(id json.RawMessage, sessionID string) error {
 	permissionRequested := false
+	committed := false
 	for {
 		behavior, err := readBehavior()
 		if err != nil {
@@ -102,6 +122,19 @@ func (provider *providerServer) runPrompt(id json.RawMessage, sessionID string) 
 			time.Sleep(50 * time.Millisecond)
 		case BehaviorFinish:
 			return provider.respond(id, map[string]string{"stopReason": "end_turn"})
+		case BehaviorCommit:
+			if err := commitWorkingTree(provider.directories[sessionID]); err != nil {
+				return provider.respondError(id, -32001, err.Error())
+			}
+			return provider.respond(id, map[string]string{"stopReason": "end_turn"})
+		case BehaviorCommitAndWork:
+			if !committed {
+				if err := commitWorkingTree(provider.directories[sessionID]); err != nil {
+					return provider.respondError(id, -32001, err.Error())
+				}
+				committed = true
+			}
+			time.Sleep(50 * time.Millisecond)
 		case BehaviorPermission:
 			if !permissionRequested {
 				permissionRequested = true
@@ -116,6 +149,56 @@ func (provider *providerServer) runPrompt(id json.RawMessage, sessionID string) 
 			return fmt.Errorf("неизвестное поведение тестового провайдера: %q", behavior)
 		}
 	}
+}
+
+func (provider *providerServer) setMode(message rpcMessage) error {
+	var params struct {
+		SessionID string `json:"sessionId"`
+		ModeID    string `json:"modeId"`
+	}
+	if err := json.Unmarshal(message.Params, &params); err != nil {
+		return fmt.Errorf("прочитать режим сессии: %w", err)
+	}
+	if provider.directories[params.SessionID] == "" || params.ModeID != ModeID {
+		return provider.respondError(message.ID, -32602, "неподдерживаемый режим тестовой сессии")
+	}
+	return provider.respond(message.ID, map[string]any{})
+}
+
+func decodeSessionDirectory(raw json.RawMessage) (string, error) {
+	var params struct {
+		CWD string `json:"cwd"`
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return "", fmt.Errorf("прочитать рабочий каталог сессии: %w", err)
+	}
+	directory := strings.TrimSpace(params.CWD)
+	if directory == "" {
+		return "", errors.New("сессия не содержит рабочего каталога")
+	}
+	return directory, nil
+}
+
+func commitWorkingTree(directory string) error {
+	if strings.TrimSpace(directory) == "" {
+		return errors.New("неизвестен рабочий каталог для коммита")
+	}
+	commands := [][]string{
+		{"-C", directory, "add", "--all"},
+		{
+			"-C", directory,
+			"-c", "user.name=OpenSpec Apply Integration",
+			"-c", "user.email=integration@example.invalid",
+			"commit", "-m", "test: prepare current changes",
+		},
+	}
+	for _, arguments := range commands {
+		command := exec.Command("git", arguments...)
+		if output, err := command.CombinedOutput(); err != nil {
+			return fmt.Errorf("выполнить git %s: %w: %s", strings.Join(arguments, " "), err, output)
+		}
+	}
+	return nil
 }
 
 func (provider *providerServer) requestPermission(sessionID string) error {

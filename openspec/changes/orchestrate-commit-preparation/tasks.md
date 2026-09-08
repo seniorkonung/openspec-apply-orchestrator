@@ -223,7 +223,7 @@
   - **Files likely touched:** Новые `cmd/openspec-apply-orchestrator/main.go`, `cmd/openspec-apply-orchestrator/prepare_commits.go`, `cmd/openspec-apply-orchestrator/prepare_commits_test.go`, `internal/orchestrator/identity.go`, `internal/orchestrator/identity_test.go`.
   - **Estimated scope:** M.
 
-- [ ] 2.8 Доказать подготовку коммитов и восстановление через реальные границы процессов
+- [x] 2.8 Доказать подготовку коммитов и восстановление через реальные границы процессов
   - **Acceptance criteria:**
     - Сквозной стенд с настоящими Git, OpenSpec CLI и изолированным Paseo подтверждает выход без агента при чистом дереве и однократную передачу проверенных настроек, тестового unrestricted-режима и встроенного поручения при staged, tracked и untracked работе; отдельный контрактный путь подтверждает точный production-вызов `codex --mode full-access`.
     - Отсутствующий `notifications.intervention`, пользовательский профиль, неизвестные provider/model/reasoning и отсутствие проверенного unrestricted-сопоставления завершают процесс как ошибка конфигурации с кодом `2`, а недостоверный каталог — как ошибка источника с кодом `1`, во всех случаях до создания workspace или сессии; журнал команд доказывает отсутствие `run`, а отказ полного режима — отсутствие повтора с default или ослабленными разрешениями.
