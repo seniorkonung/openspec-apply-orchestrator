@@ -155,6 +155,28 @@ func TestКаталогНастроекСтрогоОтклоняетПовре�
 	}
 }
 
+func TestКаталогНастроекОтклоняетNullВместоСписка(t *testing.T) {
+	t.Run("provider ls", func(t *testing.T) {
+		client := newFakeClient(t)
+		t.Setenv("FAKE_PASEO_PROVIDERS", "null")
+
+		_, err := client.readProviderCatalog(context.Background())
+		if !errors.Is(err, ErrUnexpectedJSON) {
+			t.Fatalf("ожидалась ошибка null-каталога провайдеров, получено %v", err)
+		}
+	})
+
+	t.Run("provider models", func(t *testing.T) {
+		client := newFakeClient(t)
+		t.Setenv("FAKE_PASEO_MODELS", "null")
+
+		_, err := client.readModelCatalog(context.Background(), "codex")
+		if !errors.Is(err, ErrUnexpectedJSON) {
+			t.Fatalf("ожидалась ошибка null-каталога моделей, получено %v", err)
+		}
+	})
+}
+
 func TestКаталогНастроекСохраняетОшибкуИсточника(t *testing.T) {
 	t.Run("тайм-аут", func(t *testing.T) {
 		client := newClient(newFakeRunner(t, runnerConfig{

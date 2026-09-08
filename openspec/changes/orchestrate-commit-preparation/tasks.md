@@ -118,7 +118,7 @@
   - **Files likely touched:** Новые `internal/config/config.go`, `internal/config/config_test.go`, `internal/prompts/commit_preparation.md`, `internal/prompts/prompts.go`, `internal/prompts/prompts_test.go`.
   - **Estimated scope:** M.
 
-- [ ] 2.11 Проверять настройки новой сессии по немутирующему каталогу Paseo
+- [x] 2.11 Проверять настройки новой сессии по немутирующему каталогу Paseo
   - **Acceptance criteria:**
     - Адаптер строго разбирает `provider ls --json` и `provider models <provider> --thinking --json`, различая недоступный источник, неожиданный JSON и точное отсутствие provider, model либо reasoning в каталоге.
     - Сырые значения конфигурации преобразуются в отдельный тип проверенных настроек только для встроенного provider из таблицы совместимости; контракт Paseo 0.7.2 содержит обязательное сопоставление `codex → full-access` с семантикой `approvalPolicy=never` и `sandbox=danger-full-access`, а расширение таблицы требует контрактной фикстуры точного unrestricted-режима.

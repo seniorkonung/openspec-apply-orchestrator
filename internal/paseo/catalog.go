@@ -79,6 +79,9 @@ func decodeProviderCatalog(output []byte) (map[string]providerCatalogEntry, erro
 	if err := decodeStrictJSON(output, &raw); err != nil {
 		return nil, err
 	}
+	if raw == nil {
+		return nil, ErrUnexpectedJSON
+	}
 
 	providers := make(map[string]providerCatalogEntry, len(raw))
 	for index, item := range raw {
@@ -110,6 +113,9 @@ func decodeModelCatalog(output []byte) (map[string]modelCatalogEntry, error) {
 	var raw []modelCatalogItemJSON
 	if err := decodeStrictJSON(output, &raw); err != nil {
 		return nil, err
+	}
+	if raw == nil {
+		return nil, ErrUnexpectedJSON
 	}
 
 	models := make(map[string]modelCatalogEntry, len(raw))
