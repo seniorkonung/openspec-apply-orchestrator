@@ -44,6 +44,16 @@ type VerifiedSessionSettings struct {
 	mode         fullAccessMode
 }
 
+func (settings VerifiedSessionSettings) runSettings() runSessionSettings {
+	return runSessionSettings{
+		provider:     settings.provider,
+		model:        settings.model,
+		reasoning:    settings.reasoning,
+		hasReasoning: settings.hasReasoning,
+		mode:         settings.mode.id,
+	}
+}
+
 func (settings VerifiedSessionSettings) Provider() string {
 	return settings.provider
 }
@@ -58,6 +68,25 @@ func (settings VerifiedSessionSettings) Reasoning() (string, bool) {
 
 func (settings VerifiedSessionSettings) Mode() string {
 	return settings.mode.id
+}
+
+func validateVerifiedSessionSettings(
+	environment CompatibleEnvironment,
+	settings VerifiedSessionSettings,
+) error {
+	if !validCatalogIdentifier(settings.provider) || !validCatalogIdentifier(settings.model) ||
+		(settings.hasReasoning && !validCatalogIdentifier(settings.reasoning)) ||
+		(!settings.hasReasoning && settings.reasoning != "") {
+		return ErrInvalidSessionSettings
+	}
+	expectedMode, supported := fullAccessCompatibility[compatibilityKey{
+		version:  environment.Version().String(),
+		provider: settings.provider,
+	}]
+	if !supported || settings.mode != expectedMode {
+		return ErrInvalidSessionSettings
+	}
+	return nil
 }
 
 func (client *Client) VerifySessionSettings(

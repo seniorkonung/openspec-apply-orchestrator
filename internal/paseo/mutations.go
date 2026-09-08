@@ -9,25 +9,10 @@ import (
 	"time"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/prompts"
 )
 
 const maxSessionSettingLength = 256
-
-type SessionSettings struct {
-	provider string
-	model    string
-	thinking string
-	mode     string
-}
-
-func NewSessionSettings(provider, model, thinking, mode string) (SessionSettings, error) {
-	if !validSessionSetting(provider) || !validSessionSetting(model) ||
-		(thinking != "" && !validSessionSetting(thinking)) ||
-		(mode != "" && !validSessionSetting(mode)) {
-		return SessionSettings{}, ErrInvalidSessionSettings
-	}
-	return SessionSettings{provider: provider, model: model, thinking: thinking, mode: mode}, nil
-}
 
 func validSessionSetting(value string) bool {
 	return len(value) <= maxSessionSettingLength && validIdentifierValue(value)
@@ -88,7 +73,39 @@ func (client *Client) CreateOwnSession(
 	environment CompatibleEnvironment,
 	change orchestrator.ChangeKey,
 	workspace ActiveWorkspace,
-	settings SessionSettings,
+	settings VerifiedSessionSettings,
+	prompt prompts.CommitPreparationPrompt,
+) (orchestrator.SessionID, error) {
+	if err := validateCompatibleEnvironment(environment); err != nil {
+		return orchestrator.SessionID{}, err
+	}
+	if err := validateVerifiedSessionSettings(environment, settings); err != nil {
+		return orchestrator.SessionID{}, ErrInvalidSessionSettings
+	}
+	return client.createOwnSession(
+		ctx,
+		environment,
+		change,
+		workspace,
+		settings.runSettings(),
+		prompt.Text(),
+	)
+}
+
+type runSessionSettings struct {
+	provider     string
+	model        string
+	reasoning    string
+	hasReasoning bool
+	mode         string
+}
+
+func (client *Client) createOwnSession(
+	ctx context.Context,
+	environment CompatibleEnvironment,
+	change orchestrator.ChangeKey,
+	workspace ActiveWorkspace,
+	settings runSessionSettings,
 	prompt string,
 ) (orchestrator.SessionID, error) {
 	if err := validateCompatibleEnvironment(environment); err != nil {
@@ -98,9 +115,10 @@ func (client *Client) CreateOwnSession(
 		workspace.name != managedWorkspaceName(change) || workspace.cwd == "" {
 		return orchestrator.SessionID{}, ErrInvalidDirectoryQuery
 	}
-	if !validSessionSetting(settings.provider) || !validSessionSetting(settings.model) ||
-		(settings.thinking != "" && !validSessionSetting(settings.thinking)) ||
-		(settings.mode != "" && !validSessionSetting(settings.mode)) {
+	if !validCatalogIdentifier(settings.provider) || !validCatalogIdentifier(settings.model) ||
+		(settings.hasReasoning && !validCatalogIdentifier(settings.reasoning)) ||
+		(!settings.hasReasoning && settings.reasoning != "") ||
+		(settings.mode != "" && !validCatalogIdentifier(settings.mode)) {
 		return orchestrator.SessionID{}, ErrInvalidSessionSettings
 	}
 	if strings.TrimSpace(prompt) == "" || strings.IndexByte(prompt, 0) >= 0 {
@@ -120,8 +138,8 @@ func (client *Client) CreateOwnSession(
 		"--provider", settings.provider,
 		"--model", settings.model,
 	}
-	if settings.thinking != "" {
-		args = append(args, "--thinking", settings.thinking)
+	if settings.hasReasoning {
+		args = append(args, "--thinking", settings.reasoning)
 	}
 	if settings.mode != "" {
 		args = append(args, "--mode", settings.mode)

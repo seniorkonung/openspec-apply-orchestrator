@@ -178,7 +178,7 @@ func selectSessionAction(
 		switch observed.Reason {
 		case SessionTurnFinished:
 			return archiveOwnSessionAction{workspace: workspace, session: observed.Session}
-		case SessionAgentError, SessionPermissionRequested:
+		case SessionAgentError, SessionPermissionCompatibilityViolation:
 			return stopPhaseOneAction{err: fmt.Errorf("%w: %s", ErrSessionNeedsAction, observed.Session.ID().String())}
 		default:
 			return stopPhaseOneAction{err: fmt.Errorf("%w: неизвестная причина ожидания", ErrUnexpectedObservation)}

@@ -131,7 +131,7 @@ type SessionAttentionReason uint8
 const (
 	SessionTurnFinished SessionAttentionReason = iota + 1
 	SessionAgentError
-	SessionPermissionRequested
+	SessionPermissionCompatibilityViolation
 )
 
 type ObservedOwnSessionClosed struct {
@@ -269,13 +269,13 @@ func validateSessionState(raw UntrustedOwnSession) (sessionState, SessionAttenti
 		switch reason {
 		case 0:
 			return sessionWorking, 0, nil
-		case SessionPermissionRequested:
+		case SessionPermissionCompatibilityViolation:
 			return sessionAwaitingAction, reason, nil
 		default:
 			return 0, 0, fmt.Errorf("%w: работа с причиной %q", ErrContradictorySessionState, raw.AttentionReason)
 		}
 	case "idle":
-		if reason != SessionTurnFinished && reason != SessionPermissionRequested {
+		if reason != SessionTurnFinished && reason != SessionPermissionCompatibilityViolation {
 			return 0, 0, fmt.Errorf("%w: завершённый ход без допустимой причины ожидания", ErrContradictorySessionState)
 		}
 		return sessionAwaitingAction, reason, nil
@@ -308,7 +308,7 @@ func validateAttentionReason(raw UntrustedOwnSession) (SessionAttentionReason, e
 	case "error":
 		return SessionAgentError, nil
 	case "permission":
-		return SessionPermissionRequested, nil
+		return SessionPermissionCompatibilityViolation, nil
 	default:
 		return 0, fmt.Errorf("%w: неизвестная причина участия %q", ErrContradictorySessionState, raw.AttentionReason)
 	}

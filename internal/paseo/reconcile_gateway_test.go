@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/prompts"
 )
 
 func TestGatewayПреобразуетНаблюдениеАктивныхWorkspaceДляЯдра(t *testing.T) {
@@ -86,7 +87,11 @@ func TestДваНовыхЯдраПродолжаютОднуВидимуюСе�
 	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, agentInspection("agent-visible", "running", cwd)))
 
 	for attempt := 1; attempt <= 2; attempt++ {
-		reconciler, err := orchestrator.NewPhaseOneReconciler(gateway, canceledReconcileClock{}, time.Second)
+		reconciler, err := orchestrator.NewPhaseOneReconciler(
+			phaseOneTestGateway{ReconcileGateway: gateway},
+			canceledReconcileClock{},
+			time.Second,
+		)
 		if err != nil {
 			t.Fatalf("создать ядро %d: %v", attempt, err)
 		}
@@ -150,7 +155,10 @@ func TestСозданиеСессииПовторноПроверяетWorkspace
 		"cwd": cwd, "title": "проверка",
 	}))
 
-	if err := gateway.CreateOwnSession(context.Background(), change, workspace, cwd); err != nil {
+	if err := gateway.CreateOwnSession(
+		context.Background(), change, workspace, cwd,
+		verifiedTestSessionSettings("high", true), prompts.CommitPreparation(),
+	); err != nil {
 		t.Fatalf("создать сессию: %v", err)
 	}
 
@@ -176,7 +184,10 @@ func TestИзменившеесяСостояниеПередRunОтменяет
 	t.Setenv("FAKE_PASEO_LS_EXACT", agents)
 	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, agentInspection("agent-visible", "running", cwd)))
 
-	err := gateway.CreateOwnSession(context.Background(), change, workspace, cwd)
+	err := gateway.CreateOwnSession(
+		context.Background(), change, workspace, cwd,
+		verifiedTestSessionSettings("high", true), prompts.CommitPreparation(),
+	)
 	if !errors.Is(err, orchestrator.ErrReconcileObservationChanged) {
 		t.Fatalf("ожидалось изменение основания run, получено %v", err)
 	}
@@ -185,6 +196,53 @@ func TestИзменившеесяСостояниеПередRunОтменяет
 		t.Fatalf("после смены состояния выполнен run:\n%s", recorded)
 	}
 	assertWorkspaceAndSessionReads(t, recorded)
+}
+
+func TestЗапросРазрешенияПослеСозданияПолногоДоступаСохраняетТуЖеСессию(t *testing.T) {
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustDirectoryWorkspaceID(t, "workspace-1")
+	cwd := t.TempDir()
+	gateway := newTestReconcileGateway(t)
+	recordPath := filepath.Join(t.TempDir(), "вызовы")
+	t.Setenv("FAKE_PASEO_RECORD", recordPath)
+	setOneWorkspace(t, change, workspace, cwd)
+	t.Setenv("FAKE_PASEO_LS_BROAD", "[]")
+	t.Setenv("FAKE_PASEO_LS_EXACT", "[]")
+	t.Setenv("FAKE_PASEO_RUN", encodeDirectoryJSON(t, map[string]any{
+		"agentId": "agent-created", "status": "running", "provider": "codex",
+		"cwd": cwd, "title": "подготовка",
+	}))
+
+	if err := gateway.CreateOwnSession(
+		context.Background(), change, workspace, cwd,
+		verifiedTestSessionSettings("high", true), prompts.CommitPreparation(),
+	); err != nil {
+		t.Fatalf("создать сессию полного доступа: %v", err)
+	}
+
+	agents := encodeDirectoryJSON(t, []map[string]any{
+		agentListItem("agent-created", "подготовка", "running", cwd),
+	})
+	t.Setenv("FAKE_PASEO_LS_BROAD", agents)
+	t.Setenv("FAKE_PASEO_LS_EXACT", agents)
+	inspection := agentInspection("agent-created", "running", cwd)
+	inspection["Mode"] = "full-access"
+	inspection["PendingPermissions"] = []map[string]any{{"id": "permission-1", "tool": "Bash"}}
+	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, inspection))
+
+	observation, err := gateway.FindOwnSessions(context.Background(), change, workspace, cwd)
+	if err != nil {
+		t.Fatalf("наблюдать созданную сессию: %v", err)
+	}
+	waiting, ok := observation.(orchestrator.OwnSessionAwaitingAction)
+	if !ok || waiting.Session.ID().String() != "agent-created" ||
+		waiting.Reason != orchestrator.SessionPermissionCompatibilityViolation {
+		t.Fatalf("запрос разрешения не передан человеку в той же сессии: %#v", observation)
+	}
+	recorded := readRecordedCalls(t, recordPath)
+	if strings.Count(recorded, "run\n") != 1 || strings.Contains(recorded, "archive\n") {
+		t.Fatalf("запрос разрешения вызвал замену или архивирование сессии:\n%s", recorded)
+	}
 }
 
 func TestИзменившеесяСостояниеПередArchiveОтменяетМутацию(t *testing.T) {
@@ -282,17 +340,31 @@ func TestИсчезнувшаяИзАктивныхФильтровЦелева�
 
 func newTestReconcileGateway(t *testing.T) *ReconcileGateway {
 	t.Helper()
-	settings, err := NewSessionSettings("codex", "gpt-5.6", "high", "default")
-	if err != nil {
-		t.Fatalf("создать настройки сессии: %v", err)
-	}
-	gateway, err := NewReconcileGateway(
-		newFakeClient(t), compatibleTestEnvironment(), settings, "Проверить механизм без изменения репозитория.",
-	)
+	gateway, err := NewReconcileGateway(newFakeClient(t), compatibleTestEnvironment())
 	if err != nil {
 		t.Fatalf("создать gateway сопровождения: %v", err)
 	}
 	return gateway
+}
+
+type phaseOneTestGateway struct {
+	*ReconcileGateway
+}
+
+func (gateway phaseOneTestGateway) CreateOwnSession(
+	ctx context.Context,
+	change orchestrator.ChangeKey,
+	workspace orchestrator.WorkspaceID,
+	cwd string,
+) error {
+	return gateway.ReconcileGateway.CreateOwnSession(
+		ctx,
+		change,
+		workspace,
+		cwd,
+		verifiedTestSessionSettings("high", true),
+		prompts.CommitPreparation(),
+	)
 }
 
 func setOneWorkspace(t *testing.T, change orchestrator.ChangeKey, workspace orchestrator.WorkspaceID, cwd string) {

@@ -78,13 +78,15 @@ func execute(ctx context.Context, request input) testpaseo.DriverResult {
 	if err != nil {
 		return failed(result, err)
 	}
-	settings, err := paseo.NewSessionSettings(testpaseo.ProviderID, testpaseo.ModelID, "", "")
+	reconcileGateway, err := paseo.NewReconcileGateway(client, environment)
 	if err != nil {
 		return failed(result, err)
 	}
-	gateway, err := paseo.NewReconcileGateway(client, environment, settings, request.prompt)
-	if err != nil {
-		return failed(result, err)
+	gateway := &phaseOneGateway{
+		ReconcileGateway: reconcileGateway,
+		provider:         testpaseo.ProviderID,
+		model:            testpaseo.ModelID,
+		prompt:           request.prompt,
 	}
 
 	switch request.operation {
@@ -128,7 +130,7 @@ func validateInput(request input) error {
 
 func startOne(
 	ctx context.Context,
-	gateway *paseo.ReconcileGateway,
+	gateway *phaseOneGateway,
 	change orchestrator.ChangeKey,
 	cwd string,
 ) error {
@@ -148,7 +150,7 @@ func startOne(
 
 func oneWorkspace(
 	ctx context.Context,
-	gateway *paseo.ReconcileGateway,
+	gateway *phaseOneGateway,
 	change orchestrator.ChangeKey,
 	cwd string,
 ) (orchestrator.WorkspaceID, error) {
@@ -174,7 +176,7 @@ func oneWorkspace(
 
 func observe(
 	ctx context.Context,
-	gateway *paseo.ReconcileGateway,
+	gateway *phaseOneGateway,
 	change orchestrator.ChangeKey,
 	cwd string,
 	result testpaseo.DriverResult,
@@ -202,6 +204,30 @@ func observe(
 	}
 }
 
+type phaseOneGateway struct {
+	*paseo.ReconcileGateway
+	provider string
+	model    string
+	prompt   string
+}
+
+func (gateway *phaseOneGateway) CreateOwnSession(
+	ctx context.Context,
+	change orchestrator.ChangeKey,
+	workspace orchestrator.WorkspaceID,
+	cwd string,
+) error {
+	return gateway.CreateOwnSessionForIntegration(
+		ctx,
+		change,
+		workspace,
+		cwd,
+		gateway.provider,
+		gateway.model,
+		gateway.prompt,
+	)
+}
+
 func observeSession(
 	result testpaseo.DriverResult,
 	sessions orchestrator.OwnSessionObservation,
@@ -217,7 +243,7 @@ func observeSession(
 		switch session.Reason {
 		case orchestrator.SessionTurnFinished:
 			result.Observation = testpaseo.ObservationTurnFinished
-		case orchestrator.SessionPermissionRequested:
+		case orchestrator.SessionPermissionCompatibilityViolation:
 			result.Observation = testpaseo.ObservationPermission
 		case orchestrator.SessionAgentError:
 			result.Observation = testpaseo.ObservationAgentError

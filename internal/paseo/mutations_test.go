@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/prompts"
 )
 
 func TestWorkspaceСоздаётсяСлужебнымИменемИКаноническимCWD(t *testing.T) {
@@ -63,10 +64,7 @@ func TestСобственнаяСессияСоздаётсяОднойФоно�
 		name: managedWorkspaceName(change),
 		cwd:  cwd,
 	}
-	settings, err := NewSessionSettings("codex", "gpt-5.6", "high", "default")
-	if err != nil {
-		t.Fatalf("создать настройки сессии: %v", err)
-	}
+	settings := verifiedTestSessionSettings("high", true)
 
 	client := newFakeClient(t)
 	recordPath := filepath.Join(t.TempDir(), "вызовы")
@@ -82,7 +80,7 @@ func TestСобственнаяСессияСоздаётсяОднойФоно�
 		"cwd":      cwd,
 		"title":    "подготовка",
 	}))
-	prompt := "Проверить механизм без изменения репозитория."
+	prompt := prompts.CommitPreparation()
 
 	sessionID, err := client.CreateOwnSession(
 		context.Background(), compatibleTestEnvironment(), change, workspace, settings, prompt,
@@ -104,13 +102,13 @@ func TestСобственнаяСессияСоздаётсяОднойФоно�
 		"--provider", "codex",
 		"--model", "gpt-5.6",
 		"--thinking", "high",
-		"--mode", "default",
+		"--mode", "full-access",
 		"--label", "oa.owner=openspec-apply-orchestrator",
 		"--label", "oa.version=1",
 		"--label", "oa.change=orchestrate-commit-preparation",
 		"--label", "oa.kind=commit-preparation",
 		"--label", "oa.workspace=workspace-1",
-		"--json", "--", prompt,
+		"--json", "--", prompt.Text(),
 	}, "\n") + "\n"
 	if string(recorded) != want {
 		t.Fatalf("неожиданные аргументы создания сессии:\n%s", recorded)
@@ -133,17 +131,14 @@ func TestПотерянныйОтветRunДаётНеопределённыйИ
 		name: managedWorkspaceName(change),
 		cwd:  cwd,
 	}
-	settings, err := NewSessionSettings("codex", "gpt-5.6", "", "")
-	if err != nil {
-		t.Fatalf("создать настройки сессии: %v", err)
-	}
+	settings := verifiedTestSessionSettings("", false)
 	client := newFakeClient(t)
 	recordPath := filepath.Join(t.TempDir(), "вызовы")
 	t.Setenv("FAKE_PASEO_RECORD", recordPath)
 	t.Setenv("FAKE_PASEO_RUN", "")
 
-	_, err = client.CreateOwnSession(
-		context.Background(), compatibleTestEnvironment(), change, workspace, settings, "Проверить механизм.",
+	_, err := client.CreateOwnSession(
+		context.Background(), compatibleTestEnvironment(), change, workspace, settings, prompts.CommitPreparation(),
 	)
 	if !errors.Is(err, ErrRunOutcomeUnknown) {
 		t.Fatalf("ожидался неопределённый исход run, получено %v", err)
@@ -158,6 +153,106 @@ func TestПотерянныйОтветRunДаётНеопределённыйИ
 	}
 	if strings.Count(string(recorded), "run\n") != 1 {
 		t.Fatalf("run должен вызываться ровно один раз:\n%s", recorded)
+	}
+}
+
+func TestОтказRunВПолномРежимеНеВызываетFallback(t *testing.T) {
+	cwd := t.TempDir()
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := ActiveWorkspace{
+		id:   mustMutationWorkspaceID(t, "workspace-1"),
+		name: managedWorkspaceName(change),
+		cwd:  cwd,
+	}
+	client := newFakeClient(t)
+	recordPath := filepath.Join(t.TempDir(), "вызовы")
+	t.Setenv("FAKE_PASEO_RECORD", recordPath)
+	t.Setenv("FAKE_PASEO_EXIT", "17")
+
+	_, err := client.CreateOwnSession(
+		context.Background(),
+		compatibleTestEnvironment(),
+		change,
+		workspace,
+		verifiedTestSessionSettings("", false),
+		prompts.CommitPreparation(),
+	)
+	if !errors.Is(err, ErrRunOutcomeUnknown) || !errors.Is(err, ErrCommandExit) {
+		t.Fatalf("ожидался неопределённый исход отказавшего run, получено %v", err)
+	}
+
+	recorded, readErr := os.ReadFile(recordPath)
+	if readErr != nil {
+		t.Fatalf("прочитать журнал вызовов: %v", readErr)
+	}
+	if strings.Count(string(recorded), "run\n") != 1 {
+		t.Fatalf("run должен вызываться ровно один раз:\n%s", recorded)
+	}
+	if !strings.Contains(string(recorded), "--mode\nfull-access\n") ||
+		strings.Contains(string(recorded), "--mode\ndefault\n") {
+		t.Fatalf("run получил неверный режим или fallback:\n%s", recorded)
+	}
+}
+
+func TestНепроверенныеНастройкиНеДоходятДоRun(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings VerifiedSessionSettings
+	}{
+		{name: "нулевое состояние"},
+		{
+			name: "режим по умолчанию",
+			settings: VerifiedSessionSettings{
+				provider: "codex", model: "gpt-5.6",
+				mode: fullAccessMode{id: "default", approvalPolicy: "never", sandbox: "danger-full-access"},
+			},
+		},
+		{
+			name: "поддельная семантика полного доступа",
+			settings: VerifiedSessionSettings{
+				provider: "codex", model: "gpt-5.6",
+				mode: fullAccessMode{id: "full-access", approvalPolicy: "on-request", sandbox: "workspace-write"},
+			},
+		},
+		{
+			name: "идентификатор похож на опцию CLI",
+			settings: VerifiedSessionSettings{
+				provider: "codex", model: "--host",
+				mode: fullAccessCompatibility[compatibilityKey{version: compatiblePaseoVersion, provider: "codex"}],
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+			workspace := ActiveWorkspace{
+				id:   mustMutationWorkspaceID(t, "workspace-1"),
+				name: managedWorkspaceName(change),
+				cwd:  cwd,
+			}
+			client := newFakeClient(t)
+			recordPath := filepath.Join(t.TempDir(), "вызовы")
+			t.Setenv("FAKE_PASEO_RECORD", recordPath)
+
+			_, err := client.CreateOwnSession(
+				context.Background(),
+				compatibleTestEnvironment(),
+				change,
+				workspace,
+				tt.settings,
+				prompts.CommitPreparation(),
+			)
+			if !errors.Is(err, ErrInvalidSessionSettings) {
+				t.Fatalf("ожидался отказ от непроверенных настроек, получено %v", err)
+			}
+			if recorded, readErr := os.ReadFile(recordPath); readErr == nil && strings.Contains(string(recorded), "run\n") {
+				t.Fatalf("непроверенные настройки дошли до run:\n%s", recorded)
+			} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				t.Fatalf("прочитать журнал вызовов: %v", readErr)
+			}
+		})
 	}
 }
 
@@ -300,6 +395,16 @@ func compatibleTestEnvironment() CompatibleEnvironment {
 	return CompatibleEnvironment{
 		serverID: ServerID{value: "server-1"},
 		version:  Version{value: compatiblePaseoVersion},
+	}
+}
+
+func verifiedTestSessionSettings(reasoning string, hasReasoning bool) VerifiedSessionSettings {
+	return VerifiedSessionSettings{
+		provider:     "codex",
+		model:        "gpt-5.6",
+		reasoning:    reasoning,
+		hasReasoning: hasReasoning,
+		mode:         fullAccessCompatibility[compatibilityKey{version: compatiblePaseoVersion, provider: "codex"}],
 	}
 }
 

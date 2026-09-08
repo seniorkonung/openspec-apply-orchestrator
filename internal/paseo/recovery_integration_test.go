@@ -40,11 +40,14 @@ func TestРеальныйPaseoСохраняетВидимуюСессиюПос
 	if err != nil {
 		t.Fatalf("создать workspace: %v", err)
 	}
-	settings, err := NewSessionSettings(testpaseo.ProviderID, testpaseo.ModelID, "", "")
-	if err != nil {
-		t.Fatalf("создать настройки сессии: %v", err)
-	}
-	sessionID, err := client.CreateOwnSession(ctx, environment, change, workspace, settings, integrationPrompt)
+	sessionID, err := client.createOwnSession(
+		ctx,
+		environment,
+		change,
+		workspace,
+		runSessionSettings{provider: testpaseo.ProviderID, model: testpaseo.ModelID},
+		integrationPrompt,
+	)
 	if err != nil {
 		t.Fatalf("создать собственную сессию: %v", err)
 	}

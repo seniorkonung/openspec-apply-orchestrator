@@ -144,8 +144,8 @@ func TestПричинаОжиданияИмеетЗакрытыеТипизир�
 	}{
 		{name: "ход завершён", status: "idle", reason: "finished", want: SessionTurnFinished},
 		{name: "агент завершился с ошибкой", status: "error", reason: "error", want: SessionAgentError},
-		{name: "агент запросил разрешение", status: "idle", reason: "permission", want: SessionPermissionRequested},
-		{name: "работающий агент запросил разрешение", status: "running", reason: "permission", want: SessionPermissionRequested},
+		{name: "агент нарушил контракт разрешений", status: "idle", reason: "permission", want: SessionPermissionCompatibilityViolation},
+		{name: "работающий агент нарушил контракт разрешений", status: "running", reason: "permission", want: SessionPermissionCompatibilityViolation},
 	}
 
 	for _, tt := range tests {

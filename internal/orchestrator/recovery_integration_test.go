@@ -213,7 +213,7 @@ func waitForPermission(
 		if workspaceErr == nil {
 			if one, ok := workspaces.(paseo.OneActiveWorkspace); ok {
 				observation, observeErr := client.FindOwnSessions(ctx, change, one.Workspace.ID(), harness.Workspace())
-				if waiting, ok := observation.(orchestrator.OwnSessionAwaitingAction); observeErr == nil && ok && waiting.Reason == orchestrator.SessionPermissionRequested {
+				if waiting, ok := observation.(orchestrator.OwnSessionAwaitingAction); observeErr == nil && ok && waiting.Reason == orchestrator.SessionPermissionCompatibilityViolation {
 					return waiting.Session
 				}
 			}

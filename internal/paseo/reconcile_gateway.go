@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/prompts"
 )
 
 var ErrInvalidReconcileGateway = errors.New("некорректная конфигурация gateway сопровождения")
@@ -14,23 +14,15 @@ var ErrInvalidReconcileGateway = errors.New("некорректная конфи
 type ReconcileGateway struct {
 	client      *Client
 	environment CompatibleEnvironment
-	settings    SessionSettings
-	prompt      string
 }
-
-var _ orchestrator.PhaseOneGateway = (*ReconcileGateway)(nil)
 
 func NewReconcileGateway(
 	client *Client,
 	environment CompatibleEnvironment,
-	settings SessionSettings,
-	prompt string,
 ) (*ReconcileGateway, error) {
 	gateway := &ReconcileGateway{
 		client:      client,
 		environment: environment,
-		settings:    settings,
-		prompt:      prompt,
 	}
 	if err := gateway.validate(); err != nil {
 		return nil, err
@@ -103,6 +95,32 @@ func (gateway *ReconcileGateway) CreateOwnSession(
 	change orchestrator.ChangeKey,
 	workspaceID orchestrator.WorkspaceID,
 	cwd string,
+	settings VerifiedSessionSettings,
+	prompt prompts.CommitPreparationPrompt,
+) error {
+	if err := gateway.validate(); err != nil {
+		return err
+	}
+	if err := validateVerifiedSessionSettings(gateway.environment, settings); err != nil {
+		return ErrInvalidSessionSettings
+	}
+	return gateway.createOwnSession(
+		ctx,
+		change,
+		workspaceID,
+		cwd,
+		settings.runSettings(),
+		prompt.Text(),
+	)
+}
+
+func (gateway *ReconcileGateway) createOwnSession(
+	ctx context.Context,
+	change orchestrator.ChangeKey,
+	workspaceID orchestrator.WorkspaceID,
+	cwd string,
+	settings runSessionSettings,
+	prompt string,
 ) error {
 	if err := gateway.validate(); err != nil {
 		return err
@@ -118,13 +136,13 @@ func (gateway *ReconcileGateway) CreateOwnSession(
 	if _, absent := sessions.(orchestrator.NoActiveOwnSession); !absent {
 		return orchestrator.ErrReconcileObservationChanged
 	}
-	_, err = gateway.client.CreateOwnSession(
+	_, err = gateway.client.createOwnSession(
 		ctx,
 		gateway.environment,
 		change,
 		workspace,
-		gateway.settings,
-		gateway.prompt,
+		settings,
+		prompt,
 	)
 	return err
 }
@@ -207,14 +225,6 @@ func (gateway *ReconcileGateway) validate() error {
 	}
 	if err := validateCompatibleEnvironment(gateway.environment); err != nil {
 		return err
-	}
-	if !validSessionSetting(gateway.settings.provider) || !validSessionSetting(gateway.settings.model) ||
-		(gateway.settings.thinking != "" && !validSessionSetting(gateway.settings.thinking)) ||
-		(gateway.settings.mode != "" && !validSessionSetting(gateway.settings.mode)) {
-		return ErrInvalidSessionSettings
-	}
-	if strings.TrimSpace(gateway.prompt) == "" || strings.IndexByte(gateway.prompt, 0) >= 0 {
-		return ErrInvalidInitialPrompt
 	}
 	return nil
 }

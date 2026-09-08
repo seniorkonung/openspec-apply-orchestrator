@@ -246,7 +246,7 @@ func TestInspectРазличаетРаботуОжиданиеИЗакрытие
 				if !ok {
 					t.Fatalf("ожидалось разрешение, получено %T", got)
 				}
-				if waiting.Reason != orchestrator.SessionPermissionRequested {
+				if waiting.Reason != orchestrator.SessionPermissionCompatibilityViolation {
 					t.Fatalf("неожиданная причина ожидания: %v", waiting.Reason)
 				}
 			},
