@@ -236,6 +236,18 @@
   - **Files likely touched:** `internal/testpaseo/daemon.go`, `internal/testpaseo/provider.go`, новые `internal/orchestrator/commit_preparation_integration_test.go`, `cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go`, `docs/development/paseo-compatibility.md`.
   - **Estimated scope:** M.
 
+- [ ] 2.23 Доказать аварийное восстановление production-команды после перезапуска daemon и неопределённого `run`
+  - **Acceptance criteria:**
+    - После остановки `prepare-commits` с одной видимой работающей собственной сессией и штатного перезапуска изолированного daemon новый процесс собранной production-команды восстанавливает ту же сессию по полному ID; журнал и состояние Paseo подтверждают ровно одну собственную сессию, отсутствие нового `run`, замены и чтения входов создания, а вывод и код завершения соответствуют восстановлению либо сигналу пользователя.
+    - Если настоящий `paseo run` создал сессию, но процесс production-команды не получил проверяемый JSON, первый запуск завершается кодом препятствия `1` с безопасным объяснением, выполняет ровно один `run` и не повторяет мутацию. Только после явного подтверждения стендом, что ровно одна собственная сессия стала видимой, следующий процесс восстанавливает тот же ID без нового `run`, повторной доставки поручения или создания замены.
+    - Сквозные проверки сохраняют принятую границу восстановления: они доказывают продолжение уже видимой сессии и не заявляют устранение окна между принятием `run` daemon и появлением сессии в результатах чтения.
+  - **Verification:**
+    - `go test -p=1 -count=1 -tags=paseo_integration ./cmd/openspec-apply-orchestrator/...` с реальными Git, OpenSpec CLI, Paseo CLI и локальным daemon, управляемой потерей stdout успешного `run` и штатным перезапуском daemon.
+    - `go test -p=1 -count=1 -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...`; проверить полный ID восстановленной сессии, число активных собственных сессий, журнал `run`, доставленные поручения, безопасный вывод, итоговый Git и коды отдельных процессов.
+  - **Dependencies:** 2.8.
+  - **Files likely touched:** `cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go`, возможно `internal/testpaseo/daemon.go`.
+  - **Estimated scope:** S.
+
 - [ ] 2.15 Углубить стабильный runtime Paseo за потребляющим интерфейсом команды
   - **Acceptance criteria:**
     - Production-сборка получает полностью проверенный runtime Paseo одной операцией; `cmd` больше не собирает и не хранит отдельные `Client`, `CompatibleEnvironment` и `ReconcileGateway`, а потребляющий интерфейс остаётся seam для production- и тестового адаптеров.
@@ -246,7 +258,7 @@
     - `go test ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...` с production runtime и подменным адаптером команды.
     - Go MCP references подтверждают отсутствие использования низкоуровневых `Client`, `CompatibleEnvironment`, `ReconcileGateway` и формата `paseo://` за пределами модуля Paseo.
     - Доменные и CLI-тесты подтверждают нейтральную классификацию и формулировку фактического запроса разрешения без вывода о его причине; поиск не находит прежнего `SessionPermissionCompatibilityViolation` и пользовательского сообщения о нарушении режима полного доступа.
-  - **Dependencies:** 2.8.
+  - **Dependencies:** 2.23.
   - **Files likely touched:** Новый `internal/paseo/runtime.go`; `internal/paseo/reconcile_gateway.go`, `internal/orchestrator/session.go`, `internal/orchestrator/reconcile.go`, `cmd/openspec-apply-orchestrator/production.go`, `cmd/openspec-apply-orchestrator/reporting.go`, относящиеся тесты.
   - **Estimated scope:** M.
 
@@ -326,7 +338,7 @@
   - **Acceptance criteria:**
     - Руководство ведёт будущего агента от выбора одного точного выпуска и сравнения upstream через замену активного контракта и fixtures к модульной и сквозной квалификации, явно запрещая многоверсионный реестр, SemVer-диапазон и изменение ядра при сохранённой семантике; доверенная plugin-политика пользователя не превращается в проверку совместимости оркестратора.
     - Production-версия, CLI-команды, wire DTO, provider/mode semantics и deep-link находятся только во внутреннем активном адаптере; процессный стенд перенесён в `internal/paseo/testpaseo` и переиспользует контракт, а необходимые упоминания в документации не являются вторым источником исполняемого поведения.
-    - Совместимость 0.8.0-beta.1 повторно доказана реальными сценариями задачи 2.8, включая восстановление после прерывания, полный доступ, единственную `wait`, чистый и грязный Git и отсутствие fallback.
+    - Совместимость 0.8.0-beta.1 повторно доказана реальными сценариями задач 2.8 и 2.23, включая восстановление после прерывания и перезапуска daemon, неопределённый `run`, полный доступ, единственную `wait`, чистый и грязный Git и отсутствие fallback.
   - **Verification:**
     - `go test -p=1 -count=1 -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...` на изолированном Paseo 0.8.0-beta.1.
     - Выполнить описанную в руководстве проверку locality и убедиться, что поиск `0.7.2` не находит исполняемый production-контракт.
@@ -343,6 +355,6 @@
     - `go test ./...`; `go test -race ./...`; `go vet ./...`; `go build ./cmd/openspec-apply-orchestrator`.
     - `go test -p=1 -count=1 -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...`.
     - Go MCP diagnostics и vulncheck; `openspec validate orchestrate-commit-preparation --strict --no-interactive`; проверить точную форму конфигурации, locality активного Paseo-контракта и отсутствие различий после `gofmt`.
-  - **Dependencies:** 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.10, 2.11, 2.12, 2.13, 2.14, 2.15, 2.16, 2.17, 2.18, 2.19, 2.20, 2.21, 2.22.
+  - **Dependencies:** 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.10, 2.11, 2.12, 2.13, 2.14, 2.15, 2.16, 2.17, 2.18, 2.19, 2.20, 2.21, 2.22, 2.23.
   - **Files likely touched:** Нет, только проверка и отметка задачи после успешного выполнения.
   - **Estimated scope:** XS.
