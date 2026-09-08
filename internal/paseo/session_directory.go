@@ -18,12 +18,72 @@ func (client *Client) FindOwnSessions(
 	workspace orchestrator.WorkspaceID,
 	cwd string,
 ) (orchestrator.OwnSessionObservation, error) {
+	canonicalCWD, exact, err := client.findOwnSessionCandidates(ctx, change, workspace, cwd)
+	if err != nil {
+		return nil, err
+	}
+	if len(exact) != 1 {
+		return observeListedAgents(change, workspace, exact)
+	}
+	return client.inspectOwnSession(ctx, exact[0].id, change, workspace, canonicalCWD)
+}
+
+func (client *Client) ObserveOwnSession(
+	ctx context.Context,
+	change orchestrator.ChangeKey,
+	workspace orchestrator.WorkspaceID,
+	cwd string,
+	known orchestrator.SessionID,
+) (orchestrator.OwnSessionObservation, error) {
+	if known.String() == "" {
+		return nil, fmt.Errorf("%w: отсутствует ID известной сессии", ErrInvalidDirectoryQuery)
+	}
+	canonicalCWD, exact, err := client.findOwnSessionCandidates(ctx, change, workspace, cwd)
+	if err != nil {
+		return nil, err
+	}
+
+	switch len(exact) {
+	case 0:
+		observation, err := client.inspectOwnSession(ctx, known, change, workspace, canonicalCWD)
+		if err != nil {
+			return nil, err
+		}
+		if _, closed := observation.(orchestrator.ObservedOwnSessionClosed); !closed {
+			return nil, fmt.Errorf(
+				"%w: известная сессия %s активна в inspect, но отсутствует в фильтрах",
+				ErrCorruptSessionOwnership,
+				known.String(),
+			)
+		}
+		return observation, nil
+	case 1:
+		if exact[0].id != known {
+			return nil, fmt.Errorf(
+				"%w: ожидалась %s, найдена %s",
+				ErrSessionIdentityMismatch,
+				known.String(),
+				exact[0].id.String(),
+			)
+		}
+		return client.inspectOwnSession(ctx, known, change, workspace, canonicalCWD)
+	default:
+		return observeListedAgents(change, workspace, exact)
+	}
+}
+
+func (client *Client) findOwnSessionCandidates(
+	ctx context.Context,
+	change orchestrator.ChangeKey,
+	workspace orchestrator.WorkspaceID,
+	cwd string,
+) (string, []listedAgent, error) {
 	if change.String() == "" || workspace.String() == "" {
-		return nil, fmt.Errorf("%w: отсутствует ключ change или workspace", ErrInvalidDirectoryQuery)
+		return "", nil, fmt.Errorf("%w: отсутствует ключ change или workspace", ErrInvalidDirectoryQuery)
 	}
 	canonicalCWD, err := canonicalDirectory(cwd)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 
 	broadFilters := []labelFilter{
@@ -39,30 +99,35 @@ func (client *Client) FindOwnSessions(
 
 	broad, err := client.listAgents(ctx, broadFilters)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	exact, err := client.listAgents(ctx, exactFilters)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	if !sameAgentSet(broad, exact) {
-		return nil, fmt.Errorf(
+		return "", nil, fmt.Errorf(
 			"%w: широкий набор %d, точный набор %d",
 			ErrCorruptSessionOwnership,
 			len(broad),
 			len(exact),
 		)
 	}
+	return canonicalCWD, exact, nil
+}
 
-	if len(exact) != 1 {
-		return observeListedAgents(change, workspace, exact)
-	}
-
-	inspection, err := client.inspectAgent(ctx, exact[0].id)
+func (client *Client) inspectOwnSession(
+	ctx context.Context,
+	expectedID orchestrator.SessionID,
+	change orchestrator.ChangeKey,
+	workspace orchestrator.WorkspaceID,
+	canonicalCWD string,
+) (orchestrator.OwnSessionObservation, error) {
+	inspection, err := client.inspectAgent(ctx, expectedID)
 	if err != nil {
 		return nil, err
 	}
-	raw, err := inspection.toUntrustedSession(exact[0].id, change, workspace, canonicalCWD)
+	raw, err := inspection.toUntrustedSession(expectedID, change, workspace, canonicalCWD)
 	if err != nil {
 		return nil, err
 	}

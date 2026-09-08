@@ -84,6 +84,123 @@ func TestРучныеИЧужиеСессииНеСтановятсяСобст�
 	}
 }
 
+func TestИзвестнаяСобственнаяСессияОстаётсяЕдинственнойЦельюНаблюдения(t *testing.T) {
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustDirectoryWorkspaceID(t, "workspace-1")
+	cwd := t.TempDir()
+	client := clientWithOneExactSession(t, cwd, "running")
+	recordPath := filepath.Join(t.TempDir(), "команды")
+	t.Setenv("FAKE_PASEO_RECORD", recordPath)
+	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, agentInspection("agent-123", "running", cwd)))
+
+	observation, err := client.ObserveOwnSession(
+		context.Background(), change, workspace, cwd, mustSessionID(t, "agent-123"),
+	)
+	if err != nil {
+		t.Fatalf("наблюдать известную сессию: %v", err)
+	}
+	working, ok := observation.(orchestrator.WorkingOwnSession)
+	if !ok || working.Session.ID().String() != "agent-123" {
+		t.Fatalf("ожидалась работа известной сессии, получено %#v", observation)
+	}
+
+	recorded := readRecordedCalls(t, recordPath)
+	if strings.Count(recorded, "ls\n--global\n") != 2 ||
+		!strings.Contains(recorded, "inspect\nagent-123\n--json\n") {
+		t.Fatalf("ожидались свежие фильтры и inspect известной цели:\n%s", recorded)
+	}
+}
+
+func TestИсчезновениеИзАктивныхФильтровПодтверждаетсяInspectИзвестнойСессии(t *testing.T) {
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustDirectoryWorkspaceID(t, "workspace-1")
+	cwd := t.TempDir()
+	client := newFakeClient(t)
+	recordPath := filepath.Join(t.TempDir(), "команды")
+	t.Setenv("FAKE_PASEO_RECORD", recordPath)
+	t.Setenv("FAKE_PASEO_LS_BROAD", "[]")
+	t.Setenv("FAKE_PASEO_LS_EXACT", "[]")
+	archived := agentInspection("agent-known", "idle", cwd)
+	archived["Archived"] = true
+	archived["ArchivedAt"] = "2026-09-08T12:00:00Z"
+	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, archived))
+
+	observation, err := client.ObserveOwnSession(
+		context.Background(), change, workspace, cwd, mustSessionID(t, "agent-known"),
+	)
+	if err != nil {
+		t.Fatalf("подтвердить закрытие известной сессии: %v", err)
+	}
+	closed, ok := observation.(orchestrator.ObservedOwnSessionClosed)
+	if !ok || closed.Session.ID().String() != "agent-known" {
+		t.Fatalf("ожидалось подтверждённое закрытие известной сессии, получено %#v", observation)
+	}
+
+	recorded := readRecordedCalls(t, recordPath)
+	if !strings.Contains(recorded, "inspect\nagent-known\n--json\n") {
+		t.Fatalf("исчезновение не подтверждено через inspect известной цели:\n%s", recorded)
+	}
+}
+
+func TestПротиворечиеФильтровИInspectНеСчитаетсяЗакрытием(t *testing.T) {
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustDirectoryWorkspaceID(t, "workspace-1")
+	cwd := t.TempDir()
+	client := newFakeClient(t)
+	t.Setenv("FAKE_PASEO_LS_BROAD", "[]")
+	t.Setenv("FAKE_PASEO_LS_EXACT", "[]")
+	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, agentInspection("agent-known", "running", cwd)))
+
+	_, err := client.ObserveOwnSession(
+		context.Background(), change, workspace, cwd, mustSessionID(t, "agent-known"),
+	)
+	if !errors.Is(err, ErrCorruptSessionOwnership) {
+		t.Fatalf("противоречие не должно считаться закрытием, получено %v", err)
+	}
+}
+
+func TestИзвестнаяСессияНеПодменяетсяДругимАктивнымID(t *testing.T) {
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustDirectoryWorkspaceID(t, "workspace-1")
+	cwd := t.TempDir()
+	client := clientWithOneExactSession(t, cwd, "running")
+	recordPath := filepath.Join(t.TempDir(), "команды")
+	t.Setenv("FAKE_PASEO_RECORD", recordPath)
+
+	_, err := client.ObserveOwnSession(
+		context.Background(), change, workspace, cwd, mustSessionID(t, "agent-known"),
+	)
+	if !errors.Is(err, ErrSessionIdentityMismatch) {
+		t.Fatalf("ожидалась ошибка смены ID, получено %v", err)
+	}
+	if recorded := readRecordedCalls(t, recordPath); strings.Contains(recorded, "inspect\n") {
+		t.Fatalf("адаптер не должен inspect чужой цели после смены ID:\n%s", recorded)
+	}
+}
+
+func TestНовыйПроцессНеЧитаетАрхивнуюИсториюБезИзвестногоID(t *testing.T) {
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustDirectoryWorkspaceID(t, "workspace-1")
+	cwd := t.TempDir()
+	client := newFakeClient(t)
+	recordPath := filepath.Join(t.TempDir(), "команды")
+	t.Setenv("FAKE_PASEO_RECORD", recordPath)
+	t.Setenv("FAKE_PASEO_LS_BROAD", "[]")
+	t.Setenv("FAKE_PASEO_LS_EXACT", "[]")
+	t.Setenv("FAKE_PASEO_INSPECT", "архивная история не должна читаться")
+
+	observation, err := client.FindOwnSessions(context.Background(), change, workspace, cwd)
+	if err != nil {
+		t.Fatalf("найти активные сессии нового процесса: %v", err)
+	}
+	if _, ok := observation.(orchestrator.NoActiveOwnSession); !ok {
+		t.Fatalf("ожидалось отсутствие активной сессии, получено %T", observation)
+	}
+	if recorded := readRecordedCalls(t, recordPath); strings.Contains(recorded, "inspect\n") {
+		t.Fatalf("новый процесс прочитал архивную историю:\n%s", recorded)
+	}
+}
+
 func TestРазницаШирокогоИТочногоНабораОзначаетПовреждённуюПринадлежность(t *testing.T) {
 	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
 	workspace := mustDirectoryWorkspaceID(t, "workspace-1")
