@@ -3,9 +3,9 @@
 ## Assessment
 
 **Format version:** 1
-**Result:** Changes needed
+**Result:** No unresolved findings
 **Coverage status:** Complete
-**Summary:** Сквозное доказательство задачи 2.8 не охватывает production-путь после перезапуска daemon и неопределённого `run`, а утверждение об отсутствии `inspect`-polling выражено недостаточно строго.
+**Summary:** Оставшиеся пробелы сквозного доказательства задачи 2.8 имеют конкретных владельцев в задачах 2.23–2.25; активных findings не осталось.
 
 ## Review target
 
@@ -37,28 +37,12 @@
 | Pass | Status | Evidence or limitation |
 |---|---|---|
 | Independent decision review | Complete | Свежий изолированный reviewer проверил полный `3fc6f70d96a833a7cfd6d978134c8d9454016575..a143f1e96ac3572e86521286e5a338437ec6da1c` по семи назначенным Go-путям без planning-артефактов и прежних review-материалов. |
-| OpenSpec conformance | Complete | На чистом recorded head прошли `openspec validate orchestrate-commit-preparation --json`, `go test ./...`, `go test -race ./...` и точная команда задачи 2.8 `go test -p=1 -count=1 -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...`; completion claim задачи 2.8 сверена в обе стороны и дала F1–F3. |
-| Code quality | Complete | По восьми delivery/test/documentation-путям проверены correctness, readability, architecture, security, performance и доказательства; прошли `go vet ./...`, обычная production-сборка, `gofmt -d`, `git diff --check`, Go workspace diagnostics и Go vulncheck. Дополнительных findings сверх F1–F3 не подтверждено. |
+| OpenSpec conformance | Complete | На чистом recorded head прошли `openspec validate orchestrate-commit-preparation --json`, `go test ./...`, `go test -race ./...` и точная команда задачи 2.8 `go test -p=1 -count=1 -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...`; completion claim задачи 2.8 сверена в обе стороны, а оставшаяся корректирующая работа принадлежит задачам 2.23–2.25. |
+| Code quality | Complete | По восьми delivery/test/documentation-путям проверены correctness, readability, architecture, security, performance и доказательства; прошли `go vet ./...`, обычная production-сборка, `gofmt -d`, `git diff --check`, Go workspace diagnostics и Go vulncheck. Дополнительных активных findings не подтверждено. |
 
 ## Findings
 
-### F1 · High — Перезапуск daemon и неопределённый `run` не проверяются через production-команду
-
-- **Evidence:** Новый `cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go` запускает собранную команду, но не вызывает `Harness.Restart` или `Harness.InterceptRunOutput`. Неизменённый `internal/paseo/recovery_integration_test.go:18` проверяет перезапуск прямыми вызовами клиента, а `internal/paseo/recovery_integration_test.go:118` после потерянного ответа запускает специальный `DriverObserve`, не production-путь `prepare-commits`. Задача 2.8 при этом отмечена выполненной в `openspec/changes/orchestrate-commit-preparation/tasks.md:226` и требует безопасного поведения при неопределённой мутации.
-- **Evidence revisions:** ["a143f1e96ac3572e86521286e5a338437ec6da1c"]
-- **Impact:** Регрессия в production-композиции может неверно классифицировать потерянный результат `run`, создать замену или повторить мутацию после перезапуска, сохранив зелёными более низкоуровневые integration-тесты; возможны две конкурирующие собственные сессии.
-- **Required outcome:** Перезапуск daemon и потеря результата изменяющей команды должны проходить через отдельные процессы собранного `prepare-commits` и доказывать одну сессию с тем же ID, отсутствие повторного `run` и замены, а также правильные exit-коды и безопасный вывод.
-- **Earliest source of truth:** task/verification
-- **Affected artifacts:** ["задача 2.8", "cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go", "internal/paseo/recovery_integration_test.go"]
-
-### F3 · Medium — Журнал не доказывает отсутствие `inspect`-polling во время `wait`
-
-- **Evidence:** `cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go:498` ищет после записи `wait` последующую последовательность `workspace`, `ls`, `inspect`, `archive` и проверяет лишь единственность `wait`. Дополнительные `inspect` между запуском `wait` и свежим `workspace ls` не отклоняются. Однако задача 2.8 (`openspec/changes/orchestrate-commit-preparation/tasks.md:230`) и руководство (`docs/development/paseo-compatibility.md:48`) утверждают, что журнал доказывает отсутствие polling.
-- **Evidence revisions:** ["a143f1e96ac3572e86521286e5a338437ec6da1c"]
-- **Impact:** Регрессия к запрещённому техническому опросу работающей сессии останется зелёной, увеличит нагрузку на Paseo и нарушит требуемую семантику одного блокирующего ожидания.
-- **Required outcome:** Сквозная проверка должна отклонять любые технические чтения Paseo между началом блокирующего `wait` и его возвратом и отдельно подтверждать полное свежее наблюдение после события.
-- **Earliest source of truth:** task/verification
-- **Affected artifacts:** ["задача 2.8", "cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go", "docs/development/paseo-compatibility.md"]
+No unresolved findings remain in the implementation review.
 
 ## Review coverage
 
