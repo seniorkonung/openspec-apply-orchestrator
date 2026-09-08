@@ -71,6 +71,19 @@ func (gateway *ReconcileGateway) FindOwnSessions(
 	return gateway.client.FindOwnSessions(ctx, change, workspace, cwd)
 }
 
+func (gateway *ReconcileGateway) ObserveOwnSession(
+	ctx context.Context,
+	change orchestrator.ChangeKey,
+	workspace orchestrator.WorkspaceID,
+	cwd string,
+	session orchestrator.SessionID,
+) (orchestrator.OwnSessionObservation, error) {
+	if err := gateway.validate(); err != nil {
+		return nil, err
+	}
+	return gateway.client.ObserveOwnSession(ctx, change, workspace, cwd, session)
+}
+
 func (gateway *ReconcileGateway) CreateWorkspace(
 	ctx context.Context,
 	change orchestrator.ChangeKey,
@@ -97,12 +110,12 @@ func (gateway *ReconcileGateway) CreateOwnSession(
 	cwd string,
 	settings VerifiedSessionSettings,
 	prompt prompts.CommitPreparationPrompt,
-) error {
+) (orchestrator.SessionID, error) {
 	if err := gateway.validate(); err != nil {
-		return err
+		return orchestrator.SessionID{}, err
 	}
 	if err := validateVerifiedSessionSettings(gateway.environment, settings); err != nil {
-		return ErrInvalidSessionSettings
+		return orchestrator.SessionID{}, ErrInvalidSessionSettings
 	}
 	return gateway.createOwnSession(
 		ctx,
@@ -121,22 +134,22 @@ func (gateway *ReconcileGateway) createOwnSession(
 	cwd string,
 	settings runSessionSettings,
 	prompt string,
-) error {
+) (orchestrator.SessionID, error) {
 	if err := gateway.validate(); err != nil {
-		return err
+		return orchestrator.SessionID{}, err
 	}
 	workspace, err := gateway.findFreshWorkspace(ctx, change, workspaceID, cwd)
 	if err != nil {
-		return err
+		return orchestrator.SessionID{}, err
 	}
 	sessions, err := gateway.client.FindOwnSessions(ctx, change, workspaceID, cwd)
 	if err != nil {
-		return err
+		return orchestrator.SessionID{}, err
 	}
 	if _, absent := sessions.(orchestrator.NoActiveOwnSession); !absent {
-		return orchestrator.ErrReconcileObservationChanged
+		return orchestrator.SessionID{}, orchestrator.ErrReconcileObservationChanged
 	}
-	_, err = gateway.client.createOwnSession(
+	return gateway.client.createOwnSession(
 		ctx,
 		gateway.environment,
 		change,
@@ -144,6 +157,19 @@ func (gateway *ReconcileGateway) createOwnSession(
 		settings,
 		prompt,
 	)
+}
+
+func (gateway *ReconcileGateway) WaitOwnSession(
+	ctx context.Context,
+	session orchestrator.SessionID,
+) error {
+	if err := gateway.validate(); err != nil {
+		return err
+	}
+	if session.String() == "" {
+		return ErrInvalidWaitSessionID
+	}
+	_, err := gateway.client.Wait(ctx, session)
 	return err
 }
 
@@ -164,7 +190,7 @@ func (gateway *ReconcileGateway) ArchiveOwnSession(
 	if err != nil {
 		return err
 	}
-	sessions, err := gateway.client.FindOwnSessions(ctx, change, workspaceID, cwd)
+	sessions, err := gateway.client.ObserveOwnSession(ctx, change, workspaceID, cwd, session.ID())
 	if err != nil {
 		return err
 	}
@@ -174,15 +200,6 @@ func (gateway *ReconcileGateway) ArchiveOwnSession(
 			return nil
 		}
 		return orchestrator.ErrReconcileObservationChanged
-	case orchestrator.NoActiveOwnSession:
-		inspection, err := gateway.client.inspectManagedSession(ctx, workspace, session)
-		if err != nil {
-			return fmt.Errorf("%w: %w", ErrArchiveNotConfirmed, err)
-		}
-		if inspection.Archived.value {
-			return nil
-		}
-		return ErrArchiveNotConfirmed
 	case orchestrator.OwnSessionAwaitingAction:
 		if observed.Reason != orchestrator.SessionTurnFinished || observed.Session.ID() != session.ID() {
 			return orchestrator.ErrReconcileObservationChanged

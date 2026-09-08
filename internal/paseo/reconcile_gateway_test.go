@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/prompts"
@@ -89,8 +88,6 @@ func TestДваНовыхЯдраПродолжаютОднуВидимуюСе�
 	for attempt := 1; attempt <= 2; attempt++ {
 		reconciler, err := orchestrator.NewPhaseOneReconciler(
 			phaseOneTestGateway{ReconcileGateway: gateway},
-			canceledReconcileClock{},
-			time.Second,
 		)
 		if err != nil {
 			t.Fatalf("создать ядро %d: %v", attempt, err)
@@ -109,6 +106,44 @@ func TestДваНовыхЯдраПродолжаютОднуВидимуюСе�
 		strings.Count(recorded, "ls\n--global\n") != 4 ||
 		strings.Count(recorded, "inspect\n") != 2 {
 		t.Fatalf("каждое ядро должно заново прочитать workspace, фильтры и inspect:\n%s", recorded)
+	}
+}
+
+func TestGatewayПослеWaitСвежоНаблюдаетИзвестнуюСессию(t *testing.T) {
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustDirectoryWorkspaceID(t, "workspace-1")
+	session := mustSessionID(t, "agent-known")
+	cwd := t.TempDir()
+	gateway := newTestReconcileGateway(t)
+	recordPath := filepath.Join(t.TempDir(), "вызовы")
+	t.Setenv("FAKE_PASEO_RECORD", recordPath)
+	t.Setenv("FAKE_PASEO_WAIT", marshalWaitJSON(t, session.String(), "idle", "не использовать как состояние"))
+	setOneWorkspace(t, change, workspace, cwd)
+	agents := encodeDirectoryJSON(t, []map[string]any{
+		agentListItem(session.String(), "подготовка", "idle", cwd),
+	})
+	t.Setenv("FAKE_PASEO_LS_BROAD", agents)
+	t.Setenv("FAKE_PASEO_LS_EXACT", agents)
+	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, agentInspection(session.String(), "idle", cwd)))
+
+	if err := gateway.WaitOwnSession(context.Background(), session); err != nil {
+		t.Fatalf("дождаться события известной сессии: %v", err)
+	}
+	observation, err := gateway.ObserveOwnSession(context.Background(), change, workspace, cwd, session)
+	if err != nil {
+		t.Fatalf("заново наблюдать известную сессию: %v", err)
+	}
+	waiting, ok := observation.(orchestrator.OwnSessionAwaitingAction)
+	if !ok || waiting.Session.ID() != session {
+		t.Fatalf("ожидалось свежее наблюдение той же сессии, получено %#v", observation)
+	}
+
+	recorded := readRecordedCalls(t, recordPath)
+	waitIndex := strings.Index(recorded, "wait\nagent-known\n--json\n")
+	filterIndex := strings.Index(recorded, "ls\n--global\n")
+	inspectIndex := strings.Index(recorded, "inspect\nagent-known\n--json\n")
+	if waitIndex < 0 || filterIndex <= waitIndex || inspectIndex <= filterIndex {
+		t.Fatalf("после wait не выполнены свежие фильтры и inspect той же цели:\n%s", recorded)
 	}
 }
 
@@ -155,7 +190,7 @@ func TestСозданиеСессииПовторноПроверяетWorkspace
 		"cwd": cwd, "title": "проверка",
 	}))
 
-	if err := gateway.CreateOwnSession(
+	if _, err := gateway.CreateOwnSession(
 		context.Background(), change, workspace, cwd,
 		verifiedTestSessionSettings("high", true), prompts.CommitPreparation(),
 	); err != nil {
@@ -184,7 +219,7 @@ func TestИзменившеесяСостояниеПередRunОтменяет
 	t.Setenv("FAKE_PASEO_LS_EXACT", agents)
 	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, agentInspection("agent-visible", "running", cwd)))
 
-	err := gateway.CreateOwnSession(
+	_, err := gateway.CreateOwnSession(
 		context.Background(), change, workspace, cwd,
 		verifiedTestSessionSettings("high", true), prompts.CommitPreparation(),
 	)
@@ -213,7 +248,7 @@ func TestЗапросРазрешенияПослеСозданияПолног�
 		"cwd": cwd, "title": "подготовка",
 	}))
 
-	if err := gateway.CreateOwnSession(
+	if _, err := gateway.CreateOwnSession(
 		context.Background(), change, workspace, cwd,
 		verifiedTestSessionSettings("high", true), prompts.CommitPreparation(),
 	); err != nil {
@@ -356,7 +391,7 @@ func (gateway phaseOneTestGateway) CreateOwnSession(
 	change orchestrator.ChangeKey,
 	workspace orchestrator.WorkspaceID,
 	cwd string,
-) error {
+) (orchestrator.SessionID, error) {
 	return gateway.ReconcileGateway.CreateOwnSession(
 		ctx,
 		change,
@@ -365,6 +400,10 @@ func (gateway phaseOneTestGateway) CreateOwnSession(
 		verifiedTestSessionSettings("high", true),
 		prompts.CommitPreparation(),
 	)
+}
+
+func (gateway phaseOneTestGateway) WaitOwnSession(context.Context, orchestrator.SessionID) error {
+	return context.Canceled
 }
 
 func setOneWorkspace(t *testing.T, change orchestrator.ChangeKey, workspace orchestrator.WorkspaceID, cwd string) {
@@ -401,10 +440,4 @@ func assertWorkspaceAndSessionReads(t *testing.T, recorded string) {
 	if workspaceIndex < 0 || broadIndex <= workspaceIndex || exactIndex <= broadIndex {
 		t.Fatalf("не найдены последовательные свежие чтения workspace и фильтров:\n%s", recorded)
 	}
-}
-
-type canceledReconcileClock struct{}
-
-func (canceledReconcileClock) Wait(context.Context, time.Duration) error {
-	return context.Canceled
 }

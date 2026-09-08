@@ -5,23 +5,22 @@ import (
 	"errors"
 	"reflect"
 	"testing"
-	"time"
 )
 
 func TestЯдроПеречитываетСостояниеМеждуВоздействиями(t *testing.T) {
 	change := mustChangeKey(t, "orchestrate-commit-preparation")
 	workspace := mustWorkspaceID(t, "workspace-1")
 	gateway := &fakePhaseOneGateway{
-		workspace:          NoManagedWorkspace{},
-		sessions:           NoActiveOwnSession{},
-		workspaceID:        workspace,
-		sessionAfterCreate: ownSessionObservation(t, change, workspace, "session-1", "running", ""),
+		workspace:        NoManagedWorkspace{},
+		sessions:         NoActiveOwnSession{},
+		workspaceID:      workspace,
+		createdSessionID: mustReconcileSessionID(t, "session-1"),
+		knownObservations: []OwnSessionObservation{
+			ownSessionObservation(t, change, workspace, "session-1", "running", ""),
+			ownSessionObservation(t, change, workspace, "session-1", "idle", "finished"),
+		},
 	}
-	clock := &fakeReconcileClock{wait: func() {
-		gateway.sessions = ownSessionObservation(t, change, workspace, "session-1", "idle", "finished")
-	}}
-	clock.events = &gateway.events
-	reconciler, err := NewPhaseOneReconciler(gateway, clock, time.Second)
+	reconciler, err := NewPhaseOneReconciler(gateway)
 	if err != nil {
 		t.Fatalf("создать ядро сопровождения: %v", err)
 	}
@@ -33,8 +32,8 @@ func TestЯдроПеречитываетСостояниеМеждуВозде�
 	want := []string{
 		"workspace:read", "workspace:create",
 		"workspace:read", "sessions:read", "session:create",
-		"workspace:read", "sessions:read", "clock:wait",
-		"workspace:read", "sessions:read", "session:archive",
+		"workspace:read", "session:observe:session-1", "session:wait:session-1",
+		"workspace:read", "session:observe:session-1", "session:archive",
 	}
 	if !reflect.DeepEqual(gateway.events, want) {
 		t.Fatalf("неожиданная последовательность сопровождения:\nполучено: %v\nожидалось: %v", gateway.events, want)
@@ -51,11 +50,11 @@ func TestНовоеЯдроПродолжаетВидимуюСессиюБез�
 		workspace:   OneManagedWorkspace{ID: workspace},
 		sessions:    ownSessionObservation(t, change, workspace, "session-visible", "running", ""),
 		workspaceID: workspace,
+		waitErr:     context.Canceled,
 	}
 
 	for attempt := 1; attempt <= 2; attempt++ {
-		clock := &fakeReconcileClock{err: context.Canceled}
-		reconciler, err := NewPhaseOneReconciler(gateway, clock, time.Second)
+		reconciler, err := NewPhaseOneReconciler(gateway)
 		if err != nil {
 			t.Fatalf("создать ядро %d: %v", attempt, err)
 		}
@@ -105,7 +104,7 @@ func TestЗакрытиеИНуждаВЧеловекеНеВызываютНо�
 				sessions:    tt.sessions,
 				workspaceID: workspace,
 			}
-			reconciler := mustPhaseOneReconciler(t, gateway, &fakeReconcileClock{})
+			reconciler := mustPhaseOneReconciler(t, gateway)
 
 			err := reconciler.Run(context.Background(), change, "/repo")
 			if !errors.Is(err, tt.wantErr) {
@@ -149,7 +148,7 @@ func TestНеоднозначностьОстанавливаетЯдроБез�
 				sessions:    tt.sessions,
 				workspaceID: workspace,
 			}
-			reconciler := mustPhaseOneReconciler(t, gateway, &fakeReconcileClock{})
+			reconciler := mustPhaseOneReconciler(t, gateway)
 
 			err := reconciler.Run(context.Background(), change, "/repo")
 			if !errors.Is(err, tt.wantErr) {
@@ -169,11 +168,12 @@ func TestИзменившеесяОснованиеВоздействияПер�
 		workspace:          OneManagedWorkspace{ID: workspace},
 		sessions:           NoActiveOwnSession{},
 		workspaceID:        workspace,
-		sessionAfterCreate: ownSessionObservation(t, change, workspace, "session-1", "running", ""),
+		createdSessionID:   mustReconcileSessionID(t, "session-1"),
 		createSessionErr:   ErrReconcileObservationChanged,
+		sessionAfterCreate: ownSessionObservation(t, change, workspace, "session-1", "running", ""),
+		waitErr:            context.Canceled,
 	}
-	clock := &fakeReconcileClock{err: context.Canceled}
-	reconciler := mustPhaseOneReconciler(t, gateway, clock)
+	reconciler := mustPhaseOneReconciler(t, gateway)
 
 	err := reconciler.Run(context.Background(), change, "/repo")
 	if !errors.Is(err, context.Canceled) {
@@ -187,16 +187,132 @@ func TestИзменившеесяОснованиеВоздействияПер�
 	}
 }
 
+func TestПослеWaitЯдроСвежоНаблюдаетТотЖеID(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+	gateway := &fakePhaseOneGateway{
+		workspace:   OneManagedWorkspace{ID: workspace},
+		sessions:    ownSessionObservation(t, change, workspace, "session-known", "running", ""),
+		workspaceID: workspace,
+		knownObservations: []OwnSessionObservation{
+			ownSessionObservation(t, change, workspace, "session-known", "closed", ""),
+		},
+	}
+	reconciler := mustPhaseOneReconciler(t, gateway)
+
+	if err := reconciler.Run(context.Background(), change, "/repo"); err != nil {
+		t.Fatalf("сопроводить известную сессию после wait: %v", err)
+	}
+
+	want := []string{
+		"workspace:read", "sessions:read", "session:wait:session-known",
+		"workspace:read", "session:observe:session-known",
+	}
+	if !reflect.DeepEqual(gateway.events, want) {
+		t.Fatalf("ядро не сохранило цель между wait и наблюдением:\nполучено: %v\nожидалось: %v", gateway.events, want)
+	}
+}
+
+func TestОшибкаWaitНеСчитаетсяЗакрытиемСессии(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+	waitErr := errors.New("источник wait недоступен")
+	gateway := &fakePhaseOneGateway{
+		workspace:   OneManagedWorkspace{ID: workspace},
+		sessions:    ownSessionObservation(t, change, workspace, "session-known", "running", ""),
+		workspaceID: workspace,
+		waitErr:     waitErr,
+	}
+	reconciler := mustPhaseOneReconciler(t, gateway)
+
+	err := reconciler.Run(context.Background(), change, "/repo")
+	if !errors.Is(err, waitErr) {
+		t.Fatalf("ожидалась ошибка wait, получено %v", err)
+	}
+	if got := countEventPrefix(gateway.events, "session:observe:"); got != 0 {
+		t.Fatalf("ошибка wait была принята за событие закрытия: %v", gateway.events)
+	}
+}
+
+func TestЯдроНеПереключаетсяНаДругуюСессиюПослеWait(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+	gateway := &fakePhaseOneGateway{
+		workspace:   OneManagedWorkspace{ID: workspace},
+		sessions:    ownSessionObservation(t, change, workspace, "session-known", "running", ""),
+		workspaceID: workspace,
+		knownObservations: []OwnSessionObservation{
+			ownSessionObservation(t, change, workspace, "session-other", "running", ""),
+		},
+	}
+	reconciler := mustPhaseOneReconciler(t, gateway)
+
+	err := reconciler.Run(context.Background(), change, "/repo")
+	if !errors.Is(err, ErrUnexpectedObservation) {
+		t.Fatalf("ожидалась ошибка смены известной сессии, получено %v", err)
+	}
+	if countEventPrefix(gateway.events, "session:wait:") != 1 {
+		t.Fatalf("ядро переключилось на другую цель: %v", gateway.events)
+	}
+}
+
+func TestПовторПослеИзмененияОснованияArchiveСохраняетИзвестныйID(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+	gateway := &fakePhaseOneGateway{
+		workspace:   OneManagedWorkspace{ID: workspace},
+		sessions:    ownSessionObservation(t, change, workspace, "session-known", "idle", "finished"),
+		workspaceID: workspace,
+		knownObservations: []OwnSessionObservation{
+			ownSessionObservation(t, change, workspace, "session-known", "closed", ""),
+		},
+		archiveSessionErr: ErrReconcileObservationChanged,
+	}
+	reconciler := mustPhaseOneReconciler(t, gateway)
+
+	if err := reconciler.Run(context.Background(), change, "/repo"); err != nil {
+		t.Fatalf("повторить наблюдение после изменения основания archive: %v", err)
+	}
+
+	want := []string{
+		"workspace:read", "sessions:read", "session:archive",
+		"workspace:read", "session:observe:session-known",
+	}
+	if !reflect.DeepEqual(gateway.events, want) {
+		t.Fatalf("повтор потерял известный ID:\nполучено: %v\nожидалось: %v", gateway.events, want)
+	}
+}
+
+func TestИзвестнаяСессияНеРазрешаетСоздатьИсчезнувшийWorkspace(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	known := mustReconcileSessionID(t, "session-known")
+	gateway := &fakePhaseOneGateway{workspace: NoManagedWorkspace{}}
+	reconciler := mustPhaseOneReconciler(t, gateway)
+
+	action, err := reconciler.nextAction(context.Background(), change, "/repo", &known)
+	if err != nil {
+		t.Fatalf("выбрать действие: %v", err)
+	}
+	stopped, ok := action.(stopPhaseOneAction)
+	if !ok || !errors.Is(stopped.err, ErrUnexpectedObservation) {
+		t.Fatalf("исчезнувший workspace разрешил действие %T: %#v", action, action)
+	}
+}
+
 type fakePhaseOneGateway struct {
 	workspace          ManagedWorkspaceObservation
 	sessions           OwnSessionObservation
 	workspaceID        WorkspaceID
+	createdSessionID   SessionID
 	sessionAfterCreate OwnSessionObservation
+	knownObservations  []OwnSessionObservation
 	events             []string
 	createdWorkspaces  int
 	createdSessions    int
 	archivedSessions   int
 	createSessionErr   error
+	waitErr            error
+	archiveSessionErr  error
 }
 
 func (gateway *fakePhaseOneGateway) FindActiveWorkspace(
@@ -218,6 +334,22 @@ func (gateway *fakePhaseOneGateway) FindOwnSessions(
 	return gateway.sessions, nil
 }
 
+func (gateway *fakePhaseOneGateway) ObserveOwnSession(
+	_ context.Context,
+	_ ChangeKey,
+	_ WorkspaceID,
+	_ string,
+	known SessionID,
+) (OwnSessionObservation, error) {
+	gateway.events = append(gateway.events, "session:observe:"+known.String())
+	if len(gateway.knownObservations) == 0 {
+		return gateway.sessions, nil
+	}
+	observation := gateway.knownObservations[0]
+	gateway.knownObservations = gateway.knownObservations[1:]
+	return observation, nil
+}
+
 func (gateway *fakePhaseOneGateway) CreateWorkspace(context.Context, ChangeKey, string) error {
 	gateway.events = append(gateway.events, "workspace:create")
 	gateway.createdWorkspaces++
@@ -225,13 +357,25 @@ func (gateway *fakePhaseOneGateway) CreateWorkspace(context.Context, ChangeKey, 
 	return nil
 }
 
-func (gateway *fakePhaseOneGateway) CreateOwnSession(context.Context, ChangeKey, WorkspaceID, string) error {
+func (gateway *fakePhaseOneGateway) CreateOwnSession(
+	context.Context,
+	ChangeKey,
+	WorkspaceID,
+	string,
+) (SessionID, error) {
 	gateway.events = append(gateway.events, "session:create")
 	gateway.createdSessions++
-	gateway.sessions = gateway.sessionAfterCreate
+	if gateway.sessionAfterCreate != nil {
+		gateway.sessions = gateway.sessionAfterCreate
+	}
 	err := gateway.createSessionErr
 	gateway.createSessionErr = nil
-	return err
+	return gateway.createdSessionID, err
+}
+
+func (gateway *fakePhaseOneGateway) WaitOwnSession(_ context.Context, session SessionID) error {
+	gateway.events = append(gateway.events, "session:wait:"+session.String())
+	return gateway.waitErr
 }
 
 func (gateway *fakePhaseOneGateway) ArchiveOwnSession(
@@ -243,29 +387,14 @@ func (gateway *fakePhaseOneGateway) ArchiveOwnSession(
 ) error {
 	gateway.events = append(gateway.events, "session:archive")
 	gateway.archivedSessions++
-	return nil
+	err := gateway.archiveSessionErr
+	gateway.archiveSessionErr = nil
+	return err
 }
 
-type fakeReconcileClock struct {
-	events *[]string
-	wait   func()
-	err    error
-}
-
-func (clock *fakeReconcileClock) Wait(context.Context, time.Duration) error {
-	if clock.events != nil {
-		*clock.events = append(*clock.events, "clock:wait")
-	}
-	if clock.wait != nil {
-		clock.wait()
-	}
-	return clock.err
-}
-
-func mustPhaseOneReconciler(t *testing.T, gateway *fakePhaseOneGateway, clock *fakeReconcileClock) *PhaseOneReconciler {
+func mustPhaseOneReconciler(t *testing.T, gateway *fakePhaseOneGateway) *PhaseOneReconciler {
 	t.Helper()
-	clock.events = &gateway.events
-	reconciler, err := NewPhaseOneReconciler(gateway, clock, time.Second)
+	reconciler, err := NewPhaseOneReconciler(gateway)
 	if err != nil {
 		t.Fatalf("создать ядро сопровождения: %v", err)
 	}
@@ -297,6 +426,15 @@ func ownSessionObservation(
 	return observation
 }
 
+func mustReconcileSessionID(t *testing.T, value string) SessionID {
+	t.Helper()
+	id, err := NewSessionID(value)
+	if err != nil {
+		t.Fatalf("создать ID сессии: %v", err)
+	}
+	return id
+}
+
 func twoOwnSessionsObservation(t *testing.T, change ChangeKey, workspace WorkspaceID) OwnSessionObservation {
 	t.Helper()
 	first := validSession("session-1", "running")
@@ -317,6 +455,16 @@ func countEvent(events []string, target string) int {
 	count := 0
 	for _, event := range events {
 		if event == target {
+			count++
+		}
+	}
+	return count
+}
+
+func countEventPrefix(events []string, prefix string) int {
+	count := 0
+	for _, event := range events {
+		if len(event) >= len(prefix) && event[:len(prefix)] == prefix {
 			count++
 		}
 	}

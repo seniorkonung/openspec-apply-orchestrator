@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 )
 
 var (
@@ -40,53 +39,32 @@ func (AmbiguousManagedWorkspaces) isManagedWorkspaceObservation() {}
 type PhaseOneGateway interface {
 	FindActiveWorkspace(context.Context, ChangeKey, string) (ManagedWorkspaceObservation, error)
 	FindOwnSessions(context.Context, ChangeKey, WorkspaceID, string) (OwnSessionObservation, error)
+	ObserveOwnSession(context.Context, ChangeKey, WorkspaceID, string, SessionID) (OwnSessionObservation, error)
 	CreateWorkspace(context.Context, ChangeKey, string) error
-	CreateOwnSession(context.Context, ChangeKey, WorkspaceID, string) error
+	CreateOwnSession(context.Context, ChangeKey, WorkspaceID, string) (SessionID, error)
+	WaitOwnSession(context.Context, SessionID) error
 	ArchiveOwnSession(context.Context, ChangeKey, WorkspaceID, string, ManagedSession) error
 }
 
-type ReconcileClock interface {
-	Wait(context.Context, time.Duration) error
-}
-
-type SystemClock struct{}
-
-func (SystemClock) Wait(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
 type PhaseOneReconciler struct {
-	gateway      PhaseOneGateway
-	clock        ReconcileClock
-	pollInterval time.Duration
+	gateway PhaseOneGateway
 }
 
-func NewPhaseOneReconciler(
-	gateway PhaseOneGateway,
-	clock ReconcileClock,
-	pollInterval time.Duration,
-) (*PhaseOneReconciler, error) {
-	if gateway == nil || clock == nil || pollInterval <= 0 {
+func NewPhaseOneReconciler(gateway PhaseOneGateway) (*PhaseOneReconciler, error) {
+	if gateway == nil {
 		return nil, ErrInvalidReconciler
 	}
-	return &PhaseOneReconciler{gateway: gateway, clock: clock, pollInterval: pollInterval}, nil
+	return &PhaseOneReconciler{gateway: gateway}, nil
 }
 
 func (reconciler *PhaseOneReconciler) Run(ctx context.Context, change ChangeKey, cwd string) error {
-	if reconciler == nil || reconciler.gateway == nil || reconciler.clock == nil ||
-		reconciler.pollInterval <= 0 || change.String() == "" || strings.TrimSpace(cwd) == "" {
+	if reconciler == nil || reconciler.gateway == nil || change.String() == "" || strings.TrimSpace(cwd) == "" {
 		return ErrInvalidReconciler
 	}
 
+	var knownSession *SessionID
 	for {
-		action, err := reconciler.nextAction(ctx, change, cwd)
+		action, err := reconciler.nextAction(ctx, change, cwd, knownSession)
 		if err != nil {
 			return err
 		}
@@ -98,10 +76,21 @@ func (reconciler *PhaseOneReconciler) Run(ctx context.Context, change ChangeKey,
 		case createWorkspaceAction:
 			err = reconciler.gateway.CreateWorkspace(ctx, change, cwd)
 		case createOwnSessionAction:
-			err = reconciler.gateway.CreateOwnSession(ctx, change, selected.workspace, cwd)
+			created, createErr := reconciler.gateway.CreateOwnSession(ctx, change, selected.workspace, cwd)
+			if createErr == nil {
+				if created.String() == "" {
+					return fmt.Errorf("%w: создание вернуло пустой ID сессии", ErrUnexpectedObservation)
+				}
+				knownSession = &created
+			}
+			err = createErr
 		case waitOwnSessionAction:
-			err = reconciler.clock.Wait(ctx, reconciler.pollInterval)
+			known := selected.session
+			knownSession = &known
+			err = reconciler.gateway.WaitOwnSession(ctx, known)
 		case archiveOwnSessionAction:
+			known := selected.session.ID()
+			knownSession = &known
 			err = reconciler.gateway.ArchiveOwnSession(ctx, change, selected.workspace, cwd, selected.session)
 			if err == nil {
 				return nil
@@ -126,6 +115,7 @@ func (reconciler *PhaseOneReconciler) nextAction(
 	ctx context.Context,
 	change ChangeKey,
 	cwd string,
+	knownSession *SessionID,
 ) (phaseOneAction, error) {
 	workspaces, err := reconciler.gateway.FindActiveWorkspace(ctx, change, cwd)
 	if err != nil {
@@ -134,14 +124,37 @@ func (reconciler *PhaseOneReconciler) nextAction(
 
 	switch observed := workspaces.(type) {
 	case NoManagedWorkspace:
+		if knownSession != nil {
+			return stopPhaseOneAction{err: fmt.Errorf(
+				"%w: workspace известной сессии %s больше не активен",
+				ErrUnexpectedObservation,
+				knownSession.String(),
+			)}, nil
+		}
 		return createWorkspaceAction{}, nil
 	case OneManagedWorkspace:
 		if observed.ID.String() == "" {
 			return stopPhaseOneAction{err: fmt.Errorf("%w: пустой ID workspace", ErrUnexpectedObservation)}, nil
 		}
-		sessions, err := reconciler.gateway.FindOwnSessions(ctx, change, observed.ID, cwd)
+		var sessions OwnSessionObservation
+		if knownSession == nil {
+			sessions, err = reconciler.gateway.FindOwnSessions(ctx, change, observed.ID, cwd)
+		} else {
+			sessions, err = reconciler.gateway.ObserveOwnSession(
+				ctx,
+				change,
+				observed.ID,
+				cwd,
+				*knownSession,
+			)
+		}
 		if err != nil {
 			return nil, err
+		}
+		if knownSession != nil {
+			if err := validateKnownSessionObservation(*knownSession, sessions); err != nil {
+				return stopPhaseOneAction{err: err}, nil
+			}
 		}
 		return selectSessionAction(change, observed.ID, sessions), nil
 	case AmbiguousManagedWorkspaces:
@@ -170,7 +183,7 @@ func selectSessionAction(
 		if err := validateReconcileSession(change, workspace, observed.Session); err != nil {
 			return stopPhaseOneAction{err: err}
 		}
-		return waitOwnSessionAction{}
+		return waitOwnSessionAction{session: observed.Session.ID()}
 	case OwnSessionAwaitingAction:
 		if err := validateReconcileSession(change, workspace, observed.Session); err != nil {
 			return stopPhaseOneAction{err: err}
@@ -205,6 +218,33 @@ func selectSessionAction(
 	}
 }
 
+func validateKnownSessionObservation(known SessionID, observation OwnSessionObservation) error {
+	var observed SessionID
+	switch session := observation.(type) {
+	case WorkingOwnSession:
+		observed = session.Session.ID()
+	case OwnSessionAwaitingAction:
+		observed = session.Session.ID()
+	case ObservedOwnSessionClosed:
+		observed = session.Session.ID()
+	case AmbiguousOwnSessions:
+		return nil
+	case NoActiveOwnSession:
+		return fmt.Errorf("%w: известная сессия %s исчезла без подтверждения", ErrUnexpectedObservation, known.String())
+	default:
+		return fmt.Errorf("%w: неизвестное наблюдение сессии %T", ErrUnexpectedObservation, observation)
+	}
+	if observed != known {
+		return fmt.Errorf(
+			"%w: ожидалась известная сессия %s, получена %s",
+			ErrUnexpectedObservation,
+			known.String(),
+			observed.String(),
+		)
+	}
+	return nil
+}
+
 func validateReconcileSession(change ChangeKey, workspace WorkspaceID, session ManagedSession) error {
 	if session.ID().String() == "" || session.ChangeKey() != change || session.WorkspaceID() != workspace {
 		return fmt.Errorf("%w: собственная сессия не соответствует workspace или change", ErrUnexpectedObservation)
@@ -237,7 +277,9 @@ type createOwnSessionAction struct {
 
 func (createOwnSessionAction) isPhaseOneAction() {}
 
-type waitOwnSessionAction struct{}
+type waitOwnSessionAction struct {
+	session SessionID
+}
 
 func (waitOwnSessionAction) isPhaseOneAction() {}
 
