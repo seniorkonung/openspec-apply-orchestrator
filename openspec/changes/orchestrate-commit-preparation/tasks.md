@@ -210,7 +210,7 @@
   - **Files likely touched:** `internal/orchestrator/reconcile.go`, `internal/orchestrator/reconcile_test.go`, `internal/openspec/command.go`, `internal/gitstate/status.go`, `internal/paseo/reconcile_gateway.go`.
   - **Estimated scope:** M.
 
-- [ ] 2.7 Собрать production-команду одного поручения `prepare-commits`
+- [x] 2.7 Собрать production-команду одного поручения `prepare-commits`
   - **Acceptance criteria:**
     - `openspec-apply-orchestrator prepare-commits --change <name>` принимает необязательный `--store`, проверяет OpenSpec, Git, Linux-local среду, lock и совместимость Paseo и сначала разрешает существующую активную собственную сессию. Только перед созданием новой сессии команда читает конфигурацию и немутирующий каталог настроек; ни одна изменяющая команда создания не выполняется, пока не получены обязательный типизированный канал, проверенные настройки полного доступа и встроенный промпт. Отсутствующий канал возвращает ошибку конфигурации с кодом `2` и путём `notifications.intervention` до создания или изменения workspace и сессии.
     - Ключ change строится из канонических рабочего дерева и planning home, имени change и `serverId`; Git remote не участвует, а смена конфигурации не пересоздаёт уже видимую активную сессию.
