@@ -198,7 +198,7 @@ func (client *Client) ArchiveOwnSession(
 
 	before, err := client.inspectManagedSession(ctx, workspace, session)
 	if err != nil {
-		return err
+		return orchestrator.ClassifySourceReadError(ctx, orchestrator.ReadSourcePaseo, err)
 	}
 	if before.Archived.value {
 		return nil
@@ -222,6 +222,11 @@ func (client *Client) ArchiveOwnSession(
 	}
 
 	after, inspectionErr := client.inspectManagedSession(ctx, workspace, session)
+	inspectionErr = orchestrator.ClassifySourceReadError(
+		ctx,
+		orchestrator.ReadSourcePaseo,
+		inspectionErr,
+	)
 	if inspectionErr == nil && after.Archived.value {
 		return nil
 	}

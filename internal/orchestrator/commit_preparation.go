@@ -153,7 +153,11 @@ func (reconciler *CommitPreparationReconciler) Run(
 			known := selected.session
 			knownSession = &known
 			prepared = PreparedSessionCreation{}
-			err = reconciler.gateway.WaitOwnSession(ctx, known)
+			err = ClassifySourceReadError(
+				ctx,
+				ReadSourcePaseo,
+				reconciler.gateway.WaitOwnSession(ctx, known),
+			)
 		case archiveCommitSessionAction:
 			known := selected.session.ID()
 			knownSession = &known
@@ -193,11 +197,11 @@ func (reconciler *CommitPreparationReconciler) nextAction(
 	hasPreparedCreation bool,
 ) (commitPreparationAction, error) {
 	if err := reconciler.gateway.RefreshActiveChange(ctx, change, cwd); err != nil {
-		return nil, err
+		return nil, ClassifySourceReadError(ctx, ReadSourceOpenSpec, err)
 	}
 	workspaces, err := reconciler.gateway.FindActiveWorkspace(ctx, change, cwd)
 	if err != nil {
-		return nil, err
+		return nil, ClassifySourceReadError(ctx, ReadSourcePaseo, err)
 	}
 
 	switch observed := workspaces.(type) {
@@ -230,7 +234,7 @@ func (reconciler *CommitPreparationReconciler) nextAction(
 			)
 		}
 		if err != nil {
-			return nil, err
+			return nil, ClassifySourceReadError(ctx, ReadSourcePaseo, err)
 		}
 		if knownSession != nil {
 			if err := validateKnownSessionObservation(*knownSession, sessions); err != nil {
@@ -403,7 +407,7 @@ func (reconciler *CommitPreparationReconciler) readWorkingTree(
 ) (WorkingTreeObservation, error) {
 	state, err := reconciler.gateway.ReadWorkingTree(ctx, cwd)
 	if err != nil {
-		return nil, err
+		return nil, ClassifySourceReadError(ctx, ReadSourceGit, err)
 	}
 	switch state.(type) {
 	case CleanWorkingTree, DirtyWorkingTree:

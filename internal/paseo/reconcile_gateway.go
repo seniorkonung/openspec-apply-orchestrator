@@ -94,7 +94,7 @@ func (gateway *ReconcileGateway) CreateWorkspace(
 	}
 	workspaces, err := gateway.client.FindActiveWorkspace(ctx, change, cwd)
 	if err != nil {
-		return err
+		return orchestrator.ClassifySourceReadError(ctx, orchestrator.ReadSourcePaseo, err)
 	}
 	if _, absent := workspaces.(NoActiveWorkspace); !absent {
 		return orchestrator.ErrReconcileObservationChanged
@@ -144,7 +144,11 @@ func (gateway *ReconcileGateway) createOwnSession(
 	}
 	sessions, err := gateway.client.FindOwnSessions(ctx, change, workspaceID, cwd)
 	if err != nil {
-		return orchestrator.SessionID{}, err
+		return orchestrator.SessionID{}, orchestrator.ClassifySourceReadError(
+			ctx,
+			orchestrator.ReadSourcePaseo,
+			err,
+		)
 	}
 	if _, absent := sessions.(orchestrator.NoActiveOwnSession); !absent {
 		return orchestrator.SessionID{}, orchestrator.ErrReconcileObservationChanged
@@ -192,7 +196,7 @@ func (gateway *ReconcileGateway) ArchiveOwnSession(
 	}
 	sessions, err := gateway.client.ObserveOwnSession(ctx, change, workspaceID, cwd, session.ID())
 	if err != nil {
-		return err
+		return orchestrator.ClassifySourceReadError(ctx, orchestrator.ReadSourcePaseo, err)
 	}
 	switch observed := sessions.(type) {
 	case orchestrator.ObservedOwnSessionClosed:
@@ -227,7 +231,11 @@ func (gateway *ReconcileGateway) findFreshWorkspace(
 	}
 	workspaces, err := gateway.client.FindActiveWorkspace(ctx, change, cwd)
 	if err != nil {
-		return ActiveWorkspace{}, err
+		return ActiveWorkspace{}, orchestrator.ClassifySourceReadError(
+			ctx,
+			orchestrator.ReadSourcePaseo,
+			err,
+		)
 	}
 	one, ok := workspaces.(OneActiveWorkspace)
 	if !ok || one.Workspace.ID() != expected {

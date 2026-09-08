@@ -364,6 +364,186 @@ func TestИзменившеесяОснованиеПередВоздейств�
 	}
 }
 
+func TestОшибкаЧтенияВозвращаетТипизированноеПрепятствиеБезПовтора(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+	session := ownSessionObservation(t, change, workspace, "session-1", "running", "")
+
+	tests := []struct {
+		name       string
+		source     ReadSource
+		cause      error
+		gateway    func(error) *fakeCommitPreparationGateway
+		wantEvents []string
+	}{
+		{
+			name:   "OpenSpec недоступен до чтения Paseo",
+			source: ReadSourceOpenSpec,
+			cause:  errors.New("openspec завершился с кодом 1"),
+			gateway: func(cause error) *fakeCommitPreparationGateway {
+				return &fakeCommitPreparationGateway{changeErr: cause}
+			},
+			wantEvents: []string{"change:read"},
+		},
+		{
+			name:   "Paseo не возвращает активный workspace",
+			source: ReadSourcePaseo,
+			cause:  errors.New("повреждённый JSON workspace"),
+			gateway: func(cause error) *fakeCommitPreparationGateway {
+				return &fakeCommitPreparationGateway{workspaceErr: cause}
+			},
+			wantEvents: []string{"change:read", "workspace:read"},
+		},
+		{
+			name:   "Paseo не возвращает собственные сессии",
+			source: ReadSourcePaseo,
+			cause:  errors.New("список сессий неполон"),
+			gateway: func(cause error) *fakeCommitPreparationGateway {
+				return &fakeCommitPreparationGateway{
+					workspace:   OneManagedWorkspace{ID: workspace},
+					sessions:    session,
+					sessionsErr: cause,
+				}
+			},
+			wantEvents: []string{"change:read", "workspace:read", "sessions:read"},
+		},
+		{
+			name:   "Git недоступен после завершения хода",
+			source: ReadSourceGit,
+			cause:  errors.New("git status завершился с кодом 128"),
+			gateway: func(cause error) *fakeCommitPreparationGateway {
+				return &fakeCommitPreparationGateway{
+					workspace: OneManagedWorkspace{ID: workspace},
+					sessions: ownSessionObservation(
+						t, change, workspace, "session-1", "idle", "finished",
+					),
+					gitErr: cause,
+				}
+			},
+			wantEvents: []string{"change:read", "workspace:read", "sessions:read", "git:read"},
+		},
+		{
+			name:   "ошибочный результат wait относится к Paseo",
+			source: ReadSourcePaseo,
+			cause:  errors.New("wait вернул другую сессию"),
+			gateway: func(cause error) *fakeCommitPreparationGateway {
+				return &fakeCommitPreparationGateway{
+					workspace: OneManagedWorkspace{ID: workspace},
+					sessions:  session,
+					waitErr:   cause,
+				}
+			},
+			wantEvents: []string{
+				"change:read", "workspace:read", "sessions:read", "session:wait:session-1",
+			},
+		},
+		{
+			name:   "Paseo недоступен при свежем наблюдении после wait",
+			source: ReadSourcePaseo,
+			cause:  errors.New("inspect завершился неуспешно"),
+			gateway: func(cause error) *fakeCommitPreparationGateway {
+				return &fakeCommitPreparationGateway{
+					workspace:  OneManagedWorkspace{ID: workspace},
+					sessions:   session,
+					observeErr: cause,
+				}
+			},
+			wantEvents: []string{
+				"change:read", "workspace:read", "sessions:read", "session:wait:session-1",
+				"change:read", "workspace:read", "session:observe:session-1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gateway := tt.gateway(tt.cause)
+			reconciler := mustCommitPreparationReconciler(t, gateway)
+
+			outcome, err := reconciler.Run(context.Background(), change, "/repo")
+			if outcome != nil {
+				t.Fatalf("ошибка чтения признана успешным исходом: %#v", outcome)
+			}
+			assertSourceReadObstacle(t, err, tt.source, tt.cause)
+			if !reflect.DeepEqual(gateway.events, tt.wantEvents) {
+				t.Fatalf("ошибка чтения вызвала продолжение или повтор:\nполучено: %v\nожидалось: %v",
+					gateway.events, tt.wantEvents)
+			}
+			if gateway.createdWorkspaces != 0 || gateway.createdSessions != 0 || gateway.archivedSessions != 0 {
+				t.Fatalf("ошибка чтения привела к мутации: %v", gateway.events)
+			}
+		})
+	}
+}
+
+func TestОтменаОжиданияНеСтановитсяПрепятствиемЧтения(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+	gateway := &fakeCommitPreparationGateway{
+		workspace: OneManagedWorkspace{ID: workspace},
+		sessions:  ownSessionObservation(t, change, workspace, "session-1", "running", ""),
+		waitErr:   context.Canceled,
+	}
+	reconciler := mustCommitPreparationReconciler(t, gateway)
+
+	_, err := reconciler.Run(context.Background(), change, "/repo")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ожидалась отдельная отмена, получено %v", err)
+	}
+	var obstacle *SourceReadObstacle
+	if errors.As(err, &obstacle) {
+		t.Fatalf("отмена ошибочно классифицирована как препятствие чтения: %v", err)
+	}
+}
+
+func TestИзменившеесяОснованиеНеСтановитсяПрепятствиемЧтения(t *testing.T) {
+	err := ClassifySourceReadError(context.Background(), ReadSourcePaseo, ErrReconcileObservationChanged)
+	if !errors.Is(err, ErrReconcileObservationChanged) {
+		t.Fatalf("ожидалось отдельное изменение основания, получено %v", err)
+	}
+	var obstacle *SourceReadObstacle
+	if errors.As(err, &obstacle) {
+		t.Fatalf("смена основания ошибочно классифицирована как препятствие чтения: %v", err)
+	}
+}
+
+func TestСледующийЯвныйЗапускПолностьюПеречитываетИсточники(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+	running := ownSessionObservation(t, change, workspace, "session-1", "running", "")
+	gateway := &fakeCommitPreparationGateway{
+		workspace: OneManagedWorkspace{ID: workspace},
+		sessions:  running,
+		waitErr:   errors.New("paseo временно недоступен"),
+	}
+	reconciler := mustCommitPreparationReconciler(t, gateway)
+
+	if _, err := reconciler.Run(context.Background(), change, "/repo"); err == nil {
+		t.Fatal("первый запуск должен завершиться на ошибке источника")
+	}
+	firstRunEvents := len(gateway.events)
+	gateway.waitErr = nil
+	gateway.knownObservations = []OwnSessionObservation{
+		ownSessionObservation(t, change, workspace, "session-1", "idle", "finished"),
+	}
+	gateway.gitStates = []WorkingTreeObservation{CleanWorkingTree{}}
+
+	outcome, err := reconciler.Run(context.Background(), change, "/repo")
+	if err != nil {
+		t.Fatalf("восстановить сопровождение новым запуском: %v", err)
+	}
+	if _, ok := outcome.(CommitPreparationCompleted); !ok {
+		t.Fatalf("ожидалось завершение восстановленной сессии, получено %T", outcome)
+	}
+	wantSecondRun := []string{
+		"change:read", "workspace:read", "sessions:read", "session:wait:session-1",
+		"change:read", "workspace:read", "session:observe:session-1", "git:read", "session:archive:session-1",
+	}
+	if got := gateway.events[firstRunEvents:]; !reflect.DeepEqual(got, wantSecondRun) {
+		t.Fatalf("новый запуск не выполнил полное чтение:\nполучено: %v\nожидалось: %v", got, wantSecondRun)
+	}
+}
+
 type fakeCommitPreparationGateway struct {
 	workspace          ManagedWorkspaceObservation
 	workspaceID        WorkspaceID
@@ -384,6 +564,9 @@ type fakeCommitPreparationGateway struct {
 	createSessionErr   error
 	waitErr            error
 	archiveErr         error
+	workspaceErr       error
+	sessionsErr        error
+	observeErr         error
 }
 
 func (gateway *fakeCommitPreparationGateway) RefreshActiveChange(context.Context, ChangeKey, string) error {
@@ -397,6 +580,9 @@ func (gateway *fakeCommitPreparationGateway) FindActiveWorkspace(
 	string,
 ) (ManagedWorkspaceObservation, error) {
 	gateway.events = append(gateway.events, "workspace:read")
+	if gateway.workspaceErr != nil {
+		return nil, gateway.workspaceErr
+	}
 	return gateway.workspace, nil
 }
 
@@ -407,6 +593,9 @@ func (gateway *fakeCommitPreparationGateway) FindOwnSessions(
 	string,
 ) (OwnSessionObservation, error) {
 	gateway.events = append(gateway.events, "sessions:read")
+	if gateway.sessionsErr != nil {
+		return nil, gateway.sessionsErr
+	}
 	return gateway.sessions, nil
 }
 
@@ -418,6 +607,9 @@ func (gateway *fakeCommitPreparationGateway) ObserveOwnSession(
 	known SessionID,
 ) (OwnSessionObservation, error) {
 	gateway.events = append(gateway.events, "session:observe:"+known.String())
+	if gateway.observeErr != nil {
+		return nil, gateway.observeErr
+	}
 	if len(gateway.knownObservations) == 0 {
 		return gateway.sessions, nil
 	}
@@ -519,4 +711,18 @@ func indexEvent(events []string, target string) int {
 		}
 	}
 	return -1
+}
+
+func assertSourceReadObstacle(t *testing.T, err error, source ReadSource, cause error) {
+	t.Helper()
+	var obstacle *SourceReadObstacle
+	if !errors.As(err, &obstacle) {
+		t.Fatalf("ожидалось типизированное препятствие чтения, получено %T: %v", err, err)
+	}
+	if obstacle.Source() != source {
+		t.Fatalf("неверный источник препятствия: получено %v, ожидалось %v", obstacle.Source(), source)
+	}
+	if !errors.Is(err, cause) || !errors.Is(err, ErrSourceRead) {
+		t.Fatalf("препятствие потеряло причину или общий признак: %v", err)
+	}
 }

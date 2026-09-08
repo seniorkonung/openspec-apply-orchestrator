@@ -373,6 +373,102 @@ func TestИсчезнувшаяИзАктивныхФильтровЦелева�
 	}
 }
 
+func TestОшибкаСвежегоЧтенияПередМутациейВозвращаетПрепятствиеPaseo(t *testing.T) {
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustDirectoryWorkspaceID(t, "workspace-1")
+	cwd := t.TempDir()
+	session := mustMutationManagedSession(t, "agent-visible", change, workspace)
+
+	tests := []struct {
+		name   string
+		invoke func(*ReconcileGateway) error
+	}{
+		{
+			name: "создание workspace",
+			invoke: func(gateway *ReconcileGateway) error {
+				return gateway.CreateWorkspace(context.Background(), change, cwd)
+			},
+		},
+		{
+			name: "создание собственной сессии",
+			invoke: func(gateway *ReconcileGateway) error {
+				_, err := gateway.CreateOwnSession(
+					context.Background(), change, workspace, cwd,
+					verifiedTestSessionSettings("high", true), prompts.CommitPreparation(),
+				)
+				return err
+			},
+		},
+		{
+			name: "архивирование собственной сессии",
+			invoke: func(gateway *ReconcileGateway) error {
+				return gateway.ArchiveOwnSession(
+					context.Background(), change, workspace, cwd, session,
+				)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gateway := newTestReconcileGateway(t)
+			recordPath := filepath.Join(t.TempDir(), "вызовы")
+			t.Setenv("FAKE_PASEO_RECORD", recordPath)
+			t.Setenv("FAKE_PASEO_EXIT", "9")
+
+			err := tt.invoke(gateway)
+			var obstacle *orchestrator.SourceReadObstacle
+			if !errors.As(err, &obstacle) {
+				t.Fatalf("ожидалось препятствие чтения Paseo, получено %T: %v", err, err)
+			}
+			if obstacle.Source() != orchestrator.ReadSourcePaseo || !errors.Is(err, ErrCommandExit) {
+				t.Fatalf("препятствие потеряло источник или причину: %v", err)
+			}
+			recorded := readRecordedCalls(t, recordPath)
+			if strings.Contains(recorded, "workspace\ncreate\n") ||
+				strings.Contains(recorded, "run\n") || strings.Contains(recorded, "archive\n") {
+				t.Fatalf("ошибка свежего чтения не остановила мутацию:\n%s", recorded)
+			}
+		})
+	}
+}
+
+func TestОшибкаЧтенияПодтвержденияArchiveНеПризнаётУспех(t *testing.T) {
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustDirectoryWorkspaceID(t, "workspace-1")
+	cwd := t.TempDir()
+	gateway := newTestReconcileGateway(t)
+	recordPath := filepath.Join(t.TempDir(), "вызовы")
+	archiveState := filepath.Join(t.TempDir(), "архивировано")
+	t.Setenv("FAKE_PASEO_RECORD", recordPath)
+	t.Setenv("FAKE_PASEO_ARCHIVE_STATE", archiveState)
+	setOneWorkspace(t, change, workspace, cwd)
+	agents := encodeDirectoryJSON(t, []map[string]any{
+		agentListItem("agent-visible", "агент", "idle", cwd),
+	})
+	t.Setenv("FAKE_PASEO_LS_BROAD", agents)
+	t.Setenv("FAKE_PASEO_LS_EXACT", agents)
+	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, agentInspection("agent-visible", "idle", cwd)))
+	t.Setenv("FAKE_PASEO_ARCHIVE", encodeDirectoryJSON(t, map[string]any{
+		"agentId": "agent-visible", "status": "archived", "archivedAt": "2026-09-07T09:20:00Z",
+	}))
+	t.Setenv("FAKE_PASEO_INSPECT_AFTER_ARCHIVE", "{")
+	session := mustMutationManagedSession(t, "agent-visible", change, workspace)
+
+	err := gateway.ArchiveOwnSession(context.Background(), change, workspace, cwd, session)
+	var obstacle *orchestrator.SourceReadObstacle
+	if !errors.As(err, &obstacle) || obstacle.Source() != orchestrator.ReadSourcePaseo {
+		t.Fatalf("ожидалось препятствие чтения подтверждения Paseo, получено %T: %v", err, err)
+	}
+	if !errors.Is(err, ErrArchiveNotConfirmed) || !errors.Is(err, ErrTruncatedJSON) {
+		t.Fatalf("ошибка подтверждения потеряла контекст: %v", err)
+	}
+	recorded := readRecordedCalls(t, recordPath)
+	if strings.Count(recorded, "archive\n") != 1 {
+		t.Fatalf("archive должен выполняться один раз без автоматического повтора:\n%s", recorded)
+	}
+}
+
 func newTestReconcileGateway(t *testing.T) *ReconcileGateway {
 	t.Helper()
 	gateway, err := NewReconcileGateway(newFakeClient(t), compatibleTestEnvironment())
