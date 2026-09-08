@@ -19,9 +19,12 @@ func TestПолнаяКонфигурацияСохраняетНепровер�
       "reasoning": "high"
     }
   },
-  "ntfy": {
-    "url": "https://ntfy.example.invalid/project-topic",
-    "tokenEnv": "PROJECT_NTFY_TOKEN"
+  "notifications": {
+    "intervention": {
+      "type": "ntfy",
+      "url": "https://ntfy.example.invalid/project-topic",
+      "tokenEnv": "PROJECT_NTFY_TOKEN"
+    }
   }
 }`)
 
@@ -39,19 +42,19 @@ func TestПолнаяКонфигурацияСохраняетНепровер�
 	if reasoning, present := settings.Reasoning(); !present || reasoning != "high" {
 		t.Fatalf("неожиданный reasoning: %q, present=%v", reasoning, present)
 	}
-	notification, present := loaded.Notification()
-	if !present {
-		t.Fatal("ожидались настройки ntfy")
+	channel := loaded.InterventionChannel()
+	if channel.Type() != InterventionChannelTypeNtfy {
+		t.Fatalf("неожиданный тип канала: %q", channel.Type())
 	}
-	if notification.URL() != "https://ntfy.example.invalid/project-topic" {
-		t.Fatalf("неожиданный URL ntfy: %q", notification.URL())
+	if channel.URL() != "https://ntfy.example.invalid/project-topic" {
+		t.Fatalf("неожиданный URL ntfy: %q", channel.URL())
 	}
-	if tokenEnv, present := notification.TokenEnvironment(); !present || tokenEnv != "PROJECT_NTFY_TOKEN" {
+	if tokenEnv, present := channel.TokenEnvironment(); !present || tokenEnv != "PROJECT_NTFY_TOKEN" {
 		t.Fatalf("неожиданное имя переменной токена: %q, present=%v", tokenEnv, present)
 	}
 }
 
-func TestНеобязательныеЗначенияНеПодменяютсяDefault(t *testing.T) {
+func TestНеобязательныеReasoningИТокенНеПодменяютсяDefault(t *testing.T) {
 	root := newRepositoryRoot(t)
 	writeConfig(t, root, `{
   "version": 1,
@@ -59,6 +62,12 @@ func TestНеобязательныеЗначенияНеПодменяютсяD
     "commit-preparation": {
       "provider": "codex",
       "model": "gpt-6-astra"
+    }
+  },
+  "notifications": {
+    "intervention": {
+      "type": "ntfy",
+      "url": "https://ntfy.example.invalid/project-topic"
     }
   }
 }`)
@@ -70,14 +79,14 @@ func TestНеобязательныеЗначенияНеПодменяютсяD
 	if reasoning, present := loaded.CommitPreparation().Reasoning(); present || reasoning != "" {
 		t.Fatalf("reasoning не должен получать default: %q, present=%v", reasoning, present)
 	}
-	if notification, present := loaded.Notification(); present || notification != (NotificationSettings{}) {
-		t.Fatalf("ntfy не должен появляться по умолчанию: %#v, present=%v", notification, present)
+	if tokenEnvironment, present := loaded.InterventionChannel().TokenEnvironment(); present || tokenEnvironment != "" {
+		t.Fatalf("tokenEnv не должен появляться по умолчанию: %q, present=%v", tokenEnvironment, present)
 	}
 }
 
 func TestПроизвольныйПровайдерОстаётсяНепровереннымЗначениемДляБудущегоКаталога(t *testing.T) {
 	root := newRepositoryRoot(t)
-	writeConfig(t, root, `{"version":1,"sessions":{"commit-preparation":{"provider":"user-profile","model":"unknown-model"}}}`)
+	writeConfig(t, root, `{"version":1,"sessions":{"commit-preparation":{"provider":"user-profile","model":"unknown-model"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic"}}}`)
 
 	loaded, err := Read(root)
 	if err != nil {
@@ -116,9 +125,19 @@ func TestНеизвестныеПоляОтклоняютсяСТочнымПу�
 			path: "progress",
 		},
 		{
-			name: "секрет ntfy",
-			json: `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"ntfy":{"url":"https://ntfy.example.invalid/topic","token":"secret"}}`,
-			path: "ntfy.token",
+			name: "прежний верхнеуровневый ntfy",
+			json: `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"ntfy":{"url":"https://ntfy.example.invalid/topic"}}`,
+			path: "ntfy",
+		},
+		{
+			name: "литеральный секрет ntfy",
+			json: `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic","token":"secret"}}}`,
+			path: "notifications.intervention.token",
+		},
+		{
+			name: "произвольное поле канала",
+			json: `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic","headers":{}}}}`,
+			path: "notifications.intervention.headers",
 		},
 	}
 
@@ -150,40 +169,64 @@ func TestОбязательныеПоляИНекорректныеЗначен�
 			path:     "version",
 		},
 		{
+			name:     "отсутствует канал участия человека",
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}}}`,
+			expected: ErrMissingField,
+			path:     "notifications.intervention",
+		},
+		{
+			name:     "отсутствует вариант канала",
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{}}`,
+			expected: ErrMissingField,
+			path:     "notifications.intervention",
+		},
+		{
+			name:     "отсутствует тип канала",
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"url":"https://ntfy.example.invalid/topic"}}}`,
+			expected: ErrMissingField,
+			path:     "notifications.intervention.type",
+		},
+		{
+			name:     "тип канала не поддерживается",
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"email","url":"https://ntfy.example.invalid/topic"}}}`,
+			expected: ErrInvalidValue,
+			path:     "notifications.intervention.type",
+		},
+		{
 			name:     "отсутствует provider",
-			json:     `{"version":1,"sessions":{"commit-preparation":{"model":"gpt-6"}}}`,
+			json:     `{"version":1,"sessions":{"commit-preparation":{"model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic"}}}`,
 			expected: ErrMissingField,
 			path:     "sessions.commit-preparation.provider",
 		},
 		{
 			name:     "отсутствует model",
-			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex"}}}`,
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic"}}}`,
 			expected: ErrMissingField,
 			path:     "sessions.commit-preparation.model",
 		},
 		{
 			name:     "пустая model",
-			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":" "}}}`,
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":" "}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic"}}}`,
 			expected: ErrInvalidValue,
 			path:     "sessions.commit-preparation.model",
 		},
 		{
 			name:     "reasoning имеет неверный тип",
-			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6","reasoning":null}}}`,
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6","reasoning":null}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic"}}}`,
 			expected: ErrInvalidValue,
 			path:     "sessions.commit-preparation.reasoning",
 		},
 		{
 			name:     "небезопасная ссылка ntfy",
-			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"ntfy":{"url":"http://ntfy.example.invalid/topic"}}`,
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"http://ntfy.example.invalid/topic"}}}`,
 			expected: ErrInvalidValue,
-			path:     "ntfy.url",
+			path:     "notifications.intervention.url",
 		},
 		{
 			name:     "некорректное имя переменной токена",
-			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"ntfy":{"url":"https://ntfy.example.invalid/topic","tokenEnv":"TOKEN-NAME"}}`,
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic","tokenEnv":"TOKEN-NAME"}}}`,
 			expected: ErrInvalidValue,
-			path:     "ntfy.tokenEnv",
+			path:     "notifications.intervention.tokenEnv",
 		},
 	}
 
@@ -251,10 +294,25 @@ func TestКонфигурацияЧитаетсяИзКанонического�
 	if root.String() != realDirectory {
 		t.Fatalf("неожиданный канонический корень: %q", root.String())
 	}
-	writeConfig(t, root, `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}}}`)
+	writeConfig(t, root, `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic"}}}`)
 
 	if _, err := Read(root); err != nil {
 		t.Fatalf("прочитать конфигурацию по каноническому корню: %v", err)
+	}
+}
+
+func TestПарсерКаналаНеЧитаетЗначениеПеременнойОкружения(t *testing.T) {
+	const tokenEnvironment = "MISSING_NTFY_TOKEN"
+	t.Setenv(tokenEnvironment, "")
+	root := newRepositoryRoot(t)
+	writeConfig(t, root, `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic","tokenEnv":"MISSING_NTFY_TOKEN"}}}`)
+
+	loaded, err := Read(root)
+	if err != nil {
+		t.Fatalf("прочитать конфигурацию без значения переменной токена: %v", err)
+	}
+	if name, present := loaded.InterventionChannel().TokenEnvironment(); !present || name != tokenEnvironment {
+		t.Fatalf("ожидалось только имя переменной %q, получено %q, present=%v", tokenEnvironment, name, present)
 	}
 }
 

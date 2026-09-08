@@ -80,25 +80,33 @@ func (settings UntrustedAgentSettings) Reasoning() (string, bool) {
 	return settings.reasoning, settings.hasReasoning
 }
 
-type NotificationSettings struct {
+type InterventionChannelType string
+
+const InterventionChannelTypeNtfy InterventionChannelType = "ntfy"
+
+type InterventionChannel struct {
+	channelType InterventionChannelType
 	url         string
 	tokenEnv    string
 	hasTokenEnv bool
 }
 
-func (settings NotificationSettings) URL() string {
-	return settings.url
+func (channel InterventionChannel) Type() InterventionChannelType {
+	return channel.channelType
 }
 
-func (settings NotificationSettings) TokenEnvironment() (string, bool) {
-	return settings.tokenEnv, settings.hasTokenEnv
+func (channel InterventionChannel) URL() string {
+	return channel.url
+}
+
+func (channel InterventionChannel) TokenEnvironment() (string, bool) {
+	return channel.tokenEnv, channel.hasTokenEnv
 }
 
 type Config struct {
 	version           int
 	commitPreparation UntrustedAgentSettings
-	notification      NotificationSettings
-	hasNotification   bool
+	intervention      InterventionChannel
 }
 
 func (config Config) Version() int {
@@ -109,8 +117,8 @@ func (config Config) CommitPreparation() UntrustedAgentSettings {
 	return config.commitPreparation
 }
 
-func (config Config) Notification() (NotificationSettings, bool) {
-	return config.notification, config.hasNotification
+func (config Config) InterventionChannel() InterventionChannel {
+	return config.intervention
 }
 
 func Read(root RepositoryRoot) (Config, error) {
@@ -175,7 +183,7 @@ func parseConfig(document []byte) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	if err := validateObjectFields(root, "", []string{"version", "sessions", "ntfy"}, []string{"version", "sessions"}); err != nil {
+	if err := validateObjectFields(root, "", []string{"version", "sessions", "notifications"}, []string{"version", "sessions"}); err != nil {
 		return Config{}, err
 	}
 	version, err := decodeVersion(root["version"])
@@ -194,16 +202,19 @@ func parseConfig(document []byte) (Config, error) {
 		return Config{}, err
 	}
 
-	config := Config{version: version, commitPreparation: commitPreparation}
-	if rawNotification, present := root["ntfy"]; present {
-		notification, err := decodeNotificationSettings(rawNotification)
-		if err != nil {
-			return Config{}, err
-		}
-		config.notification = notification
-		config.hasNotification = true
+	rawNotifications, present := root["notifications"]
+	if !present {
+		return Config{}, fieldError("notifications.intervention", ErrMissingField)
 	}
-	return config, nil
+	intervention, err := decodeInterventionChannel(rawNotifications)
+	if err != nil {
+		return Config{}, err
+	}
+	return Config{
+		version:           version,
+		commitPreparation: commitPreparation,
+		intervention:      intervention,
+	}, nil
 }
 
 func decodeVersion(raw []byte) (int, error) {
@@ -243,29 +254,45 @@ func decodeAgentSettings(raw []byte) (UntrustedAgentSettings, error) {
 	return settings, nil
 }
 
-func decodeNotificationSettings(raw []byte) (NotificationSettings, error) {
-	const path = "ntfy"
-	object, err := decodeObject(raw, path)
+func decodeInterventionChannel(raw []byte) (InterventionChannel, error) {
+	const notificationsPath = "notifications"
+	notifications, err := decodeObject(raw, notificationsPath)
 	if err != nil {
-		return NotificationSettings{}, err
+		return InterventionChannel{}, err
 	}
-	if err := validateObjectFields(object, path, []string{"url", "tokenEnv"}, []string{"url"}); err != nil {
-		return NotificationSettings{}, err
+	if err := validateObjectFields(notifications, notificationsPath, []string{"intervention"}, []string{"intervention"}); err != nil {
+		return InterventionChannel{}, err
 	}
-	address, err := decodeString(object["url"], path+".url")
+
+	const channelPath = notificationsPath + ".intervention"
+	channel, err := decodeObject(notifications["intervention"], channelPath)
+	if err != nil {
+		return InterventionChannel{}, err
+	}
+	if err := validateObjectFields(channel, channelPath, []string{"type", "url", "tokenEnv"}, []string{"type", "url"}); err != nil {
+		return InterventionChannel{}, err
+	}
+	channelType, err := decodeString(channel["type"], channelPath+".type")
+	if err != nil || InterventionChannelType(channelType) != InterventionChannelTypeNtfy {
+		return InterventionChannel{}, fieldError(channelPath+".type", ErrInvalidValue)
+	}
+	address, err := decodeString(channel["url"], channelPath+".url")
 	if err != nil || !validNotificationURL(address) {
-		return NotificationSettings{}, fieldError(path+".url", ErrInvalidValue)
+		return InterventionChannel{}, fieldError(channelPath+".url", ErrInvalidValue)
 	}
-	settings := NotificationSettings{url: address}
-	if rawTokenEnvironment, present := object["tokenEnv"]; present {
-		tokenEnvironment, err := decodeString(rawTokenEnvironment, path+".tokenEnv")
+	intervention := InterventionChannel{
+		channelType: InterventionChannelTypeNtfy,
+		url:         address,
+	}
+	if rawTokenEnvironment, present := channel["tokenEnv"]; present {
+		tokenEnvironment, err := decodeString(rawTokenEnvironment, channelPath+".tokenEnv")
 		if err != nil || !environmentNamePattern.MatchString(tokenEnvironment) {
-			return NotificationSettings{}, fieldError(path+".tokenEnv", ErrInvalidValue)
+			return InterventionChannel{}, fieldError(channelPath+".tokenEnv", ErrInvalidValue)
 		}
-		settings.tokenEnv = tokenEnvironment
-		settings.hasTokenEnv = true
+		intervention.tokenEnv = tokenEnvironment
+		intervention.hasTokenEnv = true
 	}
-	return settings, nil
+	return intervention, nil
 }
 
 func validNotificationURL(value string) bool {

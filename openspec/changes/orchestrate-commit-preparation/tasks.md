@@ -166,7 +166,7 @@
   - **Files likely touched:** Новые `internal/paseo/wait.go`, `internal/paseo/wait_test.go`; `internal/paseo/command.go`, `internal/paseo/errors.go`.
   - **Estimated scope:** M.
 
-- [ ] 2.14 Требовать типизированный канал уведомлений для нового production-поручения
+- [x] 2.14 Требовать типизированный канал уведомлений для нового production-поручения
   - **Acceptance criteria:**
     - Входы создания нового production-поручения требуют канал из `notifications.intervention` с обязательными `type=ntfy` и `url` и необязательным `tokenEnv`; отсутствие варианта, прежнее верхнеуровневое `ntfy`, неизвестный тип, литеральный токен и произвольные поля отклоняются с точным путём.
     - Парсер проверяет только имя переменной окружения и не читает её значение: разрешение токена, HTTP-доставка и интерфейс уведомлений остаются за Phase 3.
