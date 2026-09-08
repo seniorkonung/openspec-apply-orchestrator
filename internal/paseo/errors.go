@@ -43,6 +43,8 @@ var (
 	ErrSessionIdentityMismatch         = errors.New("inspect вернул другую сессию")
 	ErrSessionWorkingDirectoryMismatch = errors.New("собственная сессия относится к другому рабочему каталогу")
 	ErrForeignSessionParent            = errors.New("сессия имеет чужого родителя")
+	ErrInvalidWaitSessionID            = errors.New("некорректный идентификатор ожидаемой сессии")
+	ErrWaitSessionIdentityMismatch     = errors.New("wait вернул другую сессию")
 )
 
 type CommandExitError struct {

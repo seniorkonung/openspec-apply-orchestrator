@@ -73,7 +73,22 @@ func (runner *runner) run(ctx context.Context, command command) ([]byte, error) 
 
 	commandCtx, cancel := context.WithTimeout(ctx, runner.timeout)
 	defer cancel()
+	return runner.runWithContext(ctx, commandCtx, command)
+}
 
+func (runner *runner) runUntilContextDone(ctx context.Context, command command) ([]byte, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("%w: отсутствует контекст", ErrInvalidRunnerConfig)
+	}
+
+	return runner.runWithContext(ctx, ctx, command)
+}
+
+func (runner *runner) runWithContext(
+	callerCtx context.Context,
+	commandCtx context.Context,
+	command command,
+) ([]byte, error) {
 	stdout := newCappedBuffer(runner.stdoutLimit)
 	stderr := newCappedBuffer(runner.stderrLimit)
 	// CommandContext передаёт аргументы без shell и отменяет только дочерний процесс;
@@ -88,8 +103,8 @@ func (runner *runner) run(ctx context.Context, command command) ([]byte, error) 
 	cmd.WaitDelay = defaultWaitDelay
 
 	err := cmd.Run()
-	if ctx.Err() != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	if callerCtx.Err() != nil {
+		if errors.Is(callerCtx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("%w: команда %s", ErrCommandTimeout, command.name)
 		}
 		return nil, fmt.Errorf("%w: команда %s", ErrCommandCanceled, command.name)

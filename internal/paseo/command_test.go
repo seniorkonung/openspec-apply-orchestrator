@@ -177,6 +177,8 @@ elif [ "$1" = "workspace" ] && [ "$2" = "create" ]; then
   stdout="${FAKE_PASEO_WORKSPACE_CREATE-$stdout}"
 elif [ "$1" = "run" ]; then
   stdout="${FAKE_PASEO_RUN-$stdout}"
+elif [ "$1" = "wait" ]; then
+  stdout="${FAKE_PASEO_WAIT-$stdout}"
 elif [ "$1" = "archive" ]; then
   stdout="${FAKE_PASEO_ARCHIVE-$stdout}"
   if [ -n "$FAKE_PASEO_ARCHIVE_STATE" ]; then
