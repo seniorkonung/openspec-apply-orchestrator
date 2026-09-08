@@ -209,7 +209,7 @@
     - Остановка CLI во время работы и после создания коммитов сохраняет одну видимую сессию; новый процесс восстанавливает её при удалённой конфигурации и при неподдерживаемых текущих provider/model/reasoning, не читает каталог ради продолжения, а чистый Git приводит к подтверждённому архивированию и успеху без повторного поручения. Те же ошибки конфигурации при отсутствии активной сессии и грязном Git блокируют создание до мутаций.
     - Грязный Git после хода, ошибка агента, неожиданный запрос разрешения и ошибка чтения источника дают предусмотренный неуспешный исход без автоматической замены или повторения неопределённой мутации.
   - **Verification:**
-    - `go test -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...`.
+    - `go test -p=1 -count=1 -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...`.
     - Проверить журнал чтений и мутаций Paseo, точный режим, доставленный промпт, ID восстановленной сессии, итоговый Git и коды процессов в каждой точке прерывания.
   - **Dependencies:** 2.7.
   - **Files likely touched:** `internal/testpaseo/daemon.go`, `internal/testpaseo/provider.go`, новые `internal/orchestrator/commit_preparation_integration_test.go`, `cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go`, `docs/development/paseo-compatibility.md`.
@@ -222,7 +222,7 @@
     - В поставку Phase 2 не попали ntfy, длительное ожидание человека, ручное закрытие переданной сессии, повторная проверка Git после него, обсуждение задач, Apply, ревью, переход к следующей фазе или архивирование change; перед продолжением требуется отдельное планирование Phase 3.
   - **Verification:**
     - `go test ./...`; `go test -race ./...`; `go vet ./...`; `go build ./cmd/openspec-apply-orchestrator`.
-    - `go test -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...`.
+    - `go test -p=1 -count=1 -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...`.
     - Go MCP diagnostics и vulncheck; `openspec validate orchestrate-commit-preparation --strict --no-interactive`; проверить отсутствие различий после `gofmt`.
   - **Dependencies:** 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.10, 2.11, 2.12.
   - **Files likely touched:** Нет, только проверка и отметка задачи после успешного выполнения.
