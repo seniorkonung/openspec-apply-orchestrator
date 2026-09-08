@@ -5,7 +5,7 @@
 **Format version:** 1
 **Result:** Changes needed
 **Coverage status:** Complete
-**Summary:** Сквозное доказательство задачи 2.8 не охватывает production-путь после перезапуска daemon и неопределённого `run`, а отдельные утверждения об отсутствии мутаций на чистом Git и `inspect`-polling выражены недостаточно строго.
+**Summary:** Сквозное доказательство задачи 2.8 не охватывает production-путь после перезапуска daemon и неопределённого `run`, а утверждение об отсутствии `inspect`-polling выражено недостаточно строго.
 
 ## Review target
 
@@ -50,15 +50,6 @@
 - **Required outcome:** Перезапуск daemon и потеря результата изменяющей команды должны проходить через отдельные процессы собранного `prepare-commits` и доказывать одну сессию с тем же ID, отсутствие повторного `run` и замены, а также правильные exit-коды и безопасный вывод.
 - **Earliest source of truth:** task/verification
 - **Affected artifacts:** ["задача 2.8", "cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go", "internal/paseo/recovery_integration_test.go"]
-
-### F2 · Medium — Чистый сценарий не исключает побочные мутации Paseo
-
-- **Evidence:** `cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go:30` проверяет только успешный код и отсутствие промптов, после чего сбрасывает уже включённый журнал команд. Доступный `assertNoPaseoMutations` в том же файле (`:534`) не вызывается; создание workspace не отправляет промпт и потому не нарушит текущую проверку.
-- **Evidence revisions:** ["a143f1e96ac3572e86521286e5a338437ec6da1c"]
-- **Impact:** Реальная команда может начать создавать workspace или выполнять другую мутацию при чистом Git, а заявленный сквозной тест продолжит проходить.
-- **Required outcome:** Сценарий чистого Git должен подтверждать отсутствие всех изменяющих команд Paseo и сохранность исходного состояния и истории Git наряду с отсутствием поручения агенту.
-- **Earliest source of truth:** task/verification
-- **Affected artifacts:** ["задача 2.8", "cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go"]
 
 ### F3 · Medium — Журнал не доказывает отсутствие `inspect`-polling во время `wait`
 
