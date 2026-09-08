@@ -236,15 +236,111 @@
   - **Files likely touched:** `internal/testpaseo/daemon.go`, `internal/testpaseo/provider.go`, новые `internal/orchestrator/commit_preparation_integration_test.go`, `cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go`, `docs/development/paseo-compatibility.md`.
   - **Estimated scope:** M.
 
+- [ ] 2.15 Углубить стабильный runtime Paseo за потребляющим интерфейсом команды
+  - **Acceptance criteria:**
+    - Production-сборка получает полностью проверенный runtime Paseo одной операцией; `cmd` больше не собирает и не хранит отдельные `Client`, `CompatibleEnvironment` и `ReconcileGateway`, а потребляющий интерфейс остаётся seam для production- и тестового адаптеров.
+    - Интерфейс runtime выражает только доменные операции совместимой среды, workspace и собственных сессий; точная версия, CLI-аргументы, wire JSON и формат deep-link через него не протекают, а ссылка на известную сессию формируется модулем Paseo.
+    - Проверенные настройки новой сессии остаются отдельным типизированным входом создания и не становятся условием восстановления, ожидания либо архивирования существующей собственной сессии.
+  - **Verification:**
+    - `go test ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...` с production runtime и подменным адаптером команды.
+    - Go MCP references подтверждают отсутствие использования низкоуровневых `Client`, `CompatibleEnvironment`, `ReconcileGateway` и формата `paseo://` за пределами модуля Paseo.
+  - **Dependencies:** 2.8.
+  - **Files likely touched:** Новый `internal/paseo/runtime.go`; `internal/paseo/reconcile_gateway.go`, `cmd/openspec-apply-orchestrator/production.go`, `cmd/openspec-apply-orchestrator/reporting.go`, относящиеся тесты.
+  - **Estimated scope:** M.
+
+- [ ] 2.16 Представить текущую интеграцию как один точный активный контракт Paseo
+  - **Acceptance criteria:**
+    - Один `activeContract` владеет точной версией CLI и daemon, системной семантикой встроенного provider и полного доступа и допустимой plugin-топологией; таблица по версиям, SemVer-диапазон и параллельные реализации отсутствуют.
+    - Проверка среды требует точного совпадения установленного CLI и локального daemon с активным контрактом и возвращает доменному модулю только проверенную среду; прежний выпуск после последующей миграции намеренно отклоняется до мутаций.
+    - Интеграционный unrestricted-режим остаётся изолированной тестовой подменой и не расширяет production-контракт другим provider либо режимом.
+  - **Verification:**
+    - `go test ./internal/paseo/...` для точного совпадения, несовместимых CLI/daemon, отсутствующей системной семантики и невозможности выбрать старый либо default-контракт.
+    - Проверить production-сборку без `paseo_integration` на отсутствие тестового provider и режима.
+  - **Dependencies:** 2.15.
+  - **Files likely touched:** Новый `internal/paseo/internal/paseocli/contract.go`; `internal/paseo/client.go`, `internal/paseo/settings.go`, `internal/paseo/integration_creation.go`, относящиеся тесты.
+  - **Estimated scope:** M.
+
+- [ ] 2.17 Изолировать запуск процессов и контракт проверки среды Paseo
+  - **Acceptance criteria:**
+    - Внутренний CLI-адаптер единолично разрешает исполняемый файл, ограничивает процессы и вывод, формирует `--version` и `status --json`, разбирает их wire-ответы и проверяет локальность, владельца, `serverId` и активный контракт.
+    - Доменный модуль получает типизированный результат совместимой среды и различимые безопасные ошибки без знания аргументов, JSON-полей и представления версии; первоначальный промпт, секреты и stderr не раскрываются.
+    - Существующие тайм-ауты, отмена, ограничения stdout/stderr и запрет автоматического повтора мутаций сохраняются через новый seam.
+  - **Verification:**
+    - `go test ./internal/paseo/...` с подменным исполняемым файлом для совместимой и несовместимой среды, повреждённого ответа, тайм-аута, отмены и ограничений вывода.
+    - `go test -race ./internal/paseo/...`; Go MCP diagnostics для изменённых Go-файлов.
+  - **Dependencies:** 2.16.
+  - **Files likely touched:** `internal/paseo/command.go`, `internal/paseo/client.go`, `internal/paseo/json.go`, новый модуль `internal/paseo/internal/paseocli`, относящиеся тесты.
+  - **Estimated scope:** M.
+
+- [ ] 2.18 Изолировать read-side команды и wire-проекции каталога и workspace Paseo
+  - **Acceptance criteria:**
+    - Аргументы и wire DTO команд `provider ls`, `provider models` и `workspace ls` находятся только во внутреннем активном адаптере; `internal/paseo` получает минимальные типизированные данные для проверки настроек и выбора активного workspace.
+    - Production-разбор требует присутствия и корректного типа используемых полей, закрывает управляющие значения и проверяет межполевые инварианты, но допускает новые неиспользуемые поля ответа.
+    - Неизвестный provider/model/reasoning, неоднозначный workspace и недостоверный источник сохраняют прежнюю классификацию и блокируют мутации без fallback.
+  - **Verification:**
+    - `go test ./internal/paseo/...` с действующими позитивными и негативными fixtures, дополнительными неиспользуемыми полями, отсутствующими обязательными полями и неизвестными управляющими значениями.
+    - Проверить журнал подменного CLI на точные read-only команды и отсутствие `workspace create`, `run` и `archive` при отказе.
+  - **Dependencies:** 2.17.
+  - **Files likely touched:** `internal/paseo/catalog.go`, `internal/paseo/directory.go`, `internal/paseo/internal/paseocli/...`, `internal/paseo/catalog_test.go`, `internal/paseo/directory_test.go`.
+  - **Estimated scope:** M.
+
+- [ ] 2.19 Изолировать read-side команды сессий и блокирующее ожидание Paseo
+  - **Acceptance criteria:**
+    - Формат `ls --global --label`, `inspect` и `wait`, включая их аргументы, wire DTO и внешние статусы, принадлежит только активному CLI-адаптеру; доменный модуль получает существующие варианты наблюдения собственной сессии и сигнал события ожидания.
+    - Необходимые ID, cwd, архивирование, родитель, permission и состояния проверяются строго, новые неиспользуемые поля допускаются, а непрозрачный `message` отбрасывается внутри адаптера без попадания в ошибки и вывод.
+    - Серверная фильтрация, выявление повреждённой принадлежности, одна блокирующая `wait` и свежее наблюдение после её возврата сохраняют поведение задачи 2.8.
+  - **Verification:**
+    - `go test ./internal/paseo/... ./internal/orchestrator/...` для отсутствующей, одной, нескольких, закрытой и повреждённой сессий, всех результатов `wait`, несовпавшего ID и аддитивных полей.
+    - Проверить точные команды фильтрации и единственную `wait` без `inspect` внутри ожидания.
+  - **Dependencies:** 2.18.
+  - **Files likely touched:** `internal/paseo/session_directory.go`, `internal/paseo/session_json.go`, `internal/paseo/wait.go`, `internal/paseo/internal/paseocli/...`, относящиеся тесты.
+  - **Estimated scope:** M.
+
+- [ ] 2.20 Изолировать мутации сессий, workspace и ссылки Paseo
+  - **Acceptance criteria:**
+    - Только активный CLI-адаптер формирует аргументы и разбирает ответы `workspace create`, `run` и `archive`, управляет специальными переменными окружения Paseo и строит deep-link; `cmd`, ядро и доменный модуль не знают внешнего формата.
+    - Доменный интерфейс по-прежнему допускает создание только из проверенных настроек и встроенного промпта, передаёт точный полный доступ и метки происхождения и не повторяет неопределённую мутацию либо отказ с default.
+    - Подтверждение созданного workspace, ID сессии и архивирования преобразуется в прежние типизированные результаты; ошибка или аддитивное поле внешнего ответа не ослабляют значимые инварианты.
+  - **Verification:**
+    - `go test ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...` с фиксацией точных мутаций, переменных окружения, неопределённых исходов, отсутствия fallback и сформированной ссылки.
+    - `rg` подтверждает отсутствие `paseo://`, аргументов внешних мутаций и wire JSON-тегов вне активного адаптера и его тестов.
+  - **Dependencies:** 2.19.
+  - **Files likely touched:** `internal/paseo/mutations.go`, `internal/paseo/internal/paseocli/...`, `cmd/openspec-apply-orchestrator/reporting.go`, `internal/paseo/mutations_test.go`, `cmd/openspec-apply-orchestrator/prepare_commits_test.go`.
+  - **Estimated scope:** M.
+
+- [ ] 2.21 Заменить активный контракт Paseo 0.7.2 на 0.8.0-beta.1
+  - **Acceptance criteria:**
+    - Активный адаптер требует ровно Paseo 0.8.0-beta.1 для CLI и daemon; 0.7.2 и иные выпуски отклоняются до мутаций, а ветви обратной совместимости отсутствуют.
+    - Для каждой используемой команды снята обезличенная fixture реального 0.8.0-beta.1, подтверждены значимые поля и состояния, точный `codex --mode full-access` с семантикой `approvalPolicy=never` и `sandbox=danger-full-access` и результат `plugin ls --json`.
+    - Любой включённый server plugin отклоняется до `workspace create` и `run`, пока Paseo не предоставляет проверяемое подтверждение эффективных provider, model, mode и окружения до поручения; capability probing не подменяет точную квалификацию выпуска.
+  - **Verification:**
+    - Запустить контрактные тесты `go test ./internal/paseo/...` против fixtures 0.8.0-beta.1 и отрицательных fixtures несовместимой версии, значимого изменения формы и неподдерживаемой plugin-топологии.
+    - `paseo --version` и `paseo status --json` в изолированном стенде подтверждают один точный выпуск до запуска сквозных сценариев.
+  - **Dependencies:** 2.20.
+  - **Files likely touched:** `internal/paseo/internal/paseocli/contract.go`, `internal/paseo/internal/paseocli/testdata/...`, `internal/testpaseo/daemon.go`, `internal/testpaseo/provider.go`, относящиеся тесты.
+  - **Estimated scope:** M.
+
+- [ ] 2.22 Зафиксировать повторяемый сценарий следующей миграции Paseo и доказать locality
+  - **Acceptance criteria:**
+    - Руководство ведёт будущего агента от выбора одного точного выпуска и сравнения upstream через замену активного контракта и fixtures к модульной и сквозной квалификации, явно запрещая многоверсионный реестр, SemVer-диапазон и изменение ядра при сохранённой семантике.
+    - Production-версия, CLI-команды, wire DTO, provider/mode semantics и deep-link находятся только во внутреннем активном адаптере; процессный стенд перенесён в `internal/paseo/testpaseo` и переиспользует контракт, а необходимые упоминания в документации не являются вторым источником исполняемого поведения.
+    - Совместимость 0.8.0-beta.1 повторно доказана реальными сценариями задачи 2.8, включая восстановление после прерывания, полный доступ, единственную `wait`, чистый и грязный Git и отсутствие fallback.
+  - **Verification:**
+    - `go test -p=1 -count=1 -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...` на изолированном Paseo 0.8.0-beta.1.
+    - Выполнить описанную в руководстве проверку locality и убедиться, что поиск `0.7.2` не находит исполняемый production-контракт.
+  - **Dependencies:** 2.21.
+  - **Files likely touched:** Новый `docs/development/paseo-upgrade.md`; `docs/development/paseo-compatibility.md`, новый `internal/paseo/testpaseo/...`, тест архитектурной locality, существующий интеграционный стенд.
+  - **Estimated scope:** M.
+
 - [ ] 2.9 Подтвердить готовность подготовки коммитов к подключению уведомлений
   - **Acceptance criteria:**
     - Выполнено условие `Ready to advance` Phase 2: различимы отсутствие работы, отсутствующий канал или неподдерживаемая настройка до мутаций, работа агента, чистый Git, ошибка чтения источника и локально видимая потребность в человеке; работающий ход использует блокирующий `wait` с последующим свежим наблюдением без короткого polling, а восстановление не создаёт повторного поручения и не зависит от актуальности канала и других входов будущего создания.
-    - Пройдены модульные, race, статические и интеграционные проверки; поведение соответствует спецификациям, обязательная для нового поручения форма конфигурации уведомлений подготовлена без чтения секрета, а отсутствие текущего канала не блокирует существующую сессию; не используются прямой протокол Paseo, собственный журнал, исходный снимок, текст активности или структурированный результат агента.
+    - Пройдены модульные, race, статические и интеграционные проверки; поведение соответствует спецификациям, обязательная для нового поручения форма конфигурации уведомлений подготовлена без чтения секрета, а отсутствие текущего канала не блокирует существующую сессию. Единственный активный контракт 0.8.0-beta.1 изолирован за стабильным доменным интерфейсом, а версия, команды, wire JSON, системная семантика и deep-link не протекают в ядро или production-команду; не используются прямой протокол Paseo, многоверсионность, собственный журнал, исходный снимок, текст активности или структурированный результат агента.
     - В поставку Phase 2 не попали интерфейс уведомлений, HTTP-доставка ntfy, длительное ожидание человека, ручное закрытие переданной сессии, повторная проверка Git после него, обсуждение задач, Apply, ревью, переход к следующей фазе или архивирование change; перед продолжением требуется отдельное планирование Phase 3.
   - **Verification:**
     - `go test ./...`; `go test -race ./...`; `go vet ./...`; `go build ./cmd/openspec-apply-orchestrator`.
     - `go test -p=1 -count=1 -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...`.
-    - Go MCP diagnostics и vulncheck; `openspec validate orchestrate-commit-preparation --strict --no-interactive`; проверить точную форму конфигурации и отсутствие различий после `gofmt`.
-  - **Dependencies:** 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.10, 2.11, 2.12, 2.13, 2.14.
+    - Go MCP diagnostics и vulncheck; `openspec validate orchestrate-commit-preparation --strict --no-interactive`; проверить точную форму конфигурации, locality активного Paseo-контракта и отсутствие различий после `gofmt`.
+  - **Dependencies:** 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.10, 2.11, 2.12, 2.13, 2.14, 2.15, 2.16, 2.17, 2.18, 2.19, 2.20, 2.21, 2.22.
   - **Files likely touched:** Нет, только проверка и отметка задачи после успешного выполнения.
   - **Estimated scope:** XS.
