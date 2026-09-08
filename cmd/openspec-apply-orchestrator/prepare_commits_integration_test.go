@@ -21,13 +21,20 @@ import (
 
 const productionIntegrationChange = "integration-commit-preparation"
 
+const productionIntegrationParallelism = 4
+
+const productionIntegrationEventTimeout = 90 * time.Second
+
+var productionIntegrationSlots = make(chan struct{}, productionIntegrationParallelism)
+
 func TestProductionКомандаПодготавливаетВсеВидыИзмененийЧерезРеальныеПроцессы(t *testing.T) {
-	harness := testpaseo.Start(t)
+	t.Parallel()
+	harness := startProductionHarness(t)
 	harness.EnableCommandRecording(t)
 	prepareProductionRepository(t, harness.Workspace())
 	binary := buildProductionCommand(t)
 
-	clean := runProductionCommand(t, binary, harness.Workspace())
+	clean := runProductionCommand(t, binary, harness)
 	if clean.exitCode != exitSuccess {
 		t.Fatalf("чистый репозиторий завершился с кодом %d:\n%s", clean.exitCode, clean.output)
 	}
@@ -38,7 +45,7 @@ func TestProductionКомандаПодготавливаетВсеВидыИз�
 
 	makeProductionRepositoryDirty(t, harness.Workspace())
 	harness.SetBehavior(t, testpaseo.Behavior("commit"))
-	completed := runProductionCommand(t, binary, harness.Workspace())
+	completed := runProductionCommand(t, binary, harness)
 	if completed.exitCode != exitSuccess {
 		catalog := harness.RunCLI(t, "provider", "ls", "--json")
 		t.Fatalf("подготовка коммитов завершилась с кодом %d:\n%s\nкаталог:\n%s", completed.exitCode, completed.output, catalog.Stdout)
@@ -57,14 +64,15 @@ func TestProductionКомандаПодготавливаетВсеВидыИз�
 }
 
 func TestProductionКомандаВосстанавливаетСессиюПослеПрерыванияИКоммита(t *testing.T) {
-	harness := testpaseo.Start(t)
+	t.Parallel()
+	harness := startProductionHarness(t)
 	harness.EnableCommandRecording(t)
 	prepareProductionRepository(t, harness.Workspace())
 	makeProductionRepositoryDirty(t, harness.Workspace())
 	binary := buildProductionCommand(t)
 	harness.SetBehavior(t, testpaseo.BehaviorWorking)
 
-	workingProcess := startProductionCommand(t, binary, harness.Workspace())
+	workingProcess := startProductionCommand(t, binary, harness)
 	sessionID := waitForOnlyOwnSession(t, harness, workingProcess)
 	waitForRecordedCommand(t, harness, "wait")
 	if err := workingProcess.command.Process.Signal(os.Interrupt); err != nil {
@@ -81,7 +89,7 @@ func TestProductionКомандаВосстанавливаетСессиюПо�
 
 	harness.ResetCommandRecording(t)
 	harness.SetBehavior(t, testpaseo.BehaviorCommitAndWork)
-	afterCommitProcess := startProductionCommand(t, binary, harness.Workspace())
+	afterCommitProcess := startProductionCommand(t, binary, harness)
 	waitForCleanGit(t, harness.Workspace())
 	waitForRecordedCommand(t, harness, "wait")
 	if err := afterCommitProcess.command.Process.Signal(os.Interrupt); err != nil {
@@ -117,7 +125,7 @@ func TestProductionКомандаВосстанавливаетСессиюПо�
 	interruptRecoveredProductionCommand(t, harness, binary, sessionID)
 
 	harness.ResetCommandRecording(t)
-	recoveredProcess := startProductionCommand(t, binary, harness.Workspace())
+	recoveredProcess := startProductionCommand(t, binary, harness)
 	waitForRecordedCommand(t, harness, "wait")
 	harness.SetBehavior(t, testpaseo.BehaviorFinish)
 	recovered := recoveredProcess.wait(t)
@@ -134,6 +142,119 @@ func TestProductionКомандаВосстанавливаетСессиюПо�
 	assertRecoveryReadOrder(t, harness.RecordedCommands(t))
 }
 
+func TestProductionКомандаВосстанавливаетТуЖеСессиюПослеПерезапускаDaemon(t *testing.T) {
+	t.Parallel()
+	harness := startProductionHarness(t)
+	harness.EnableCommandRecording(t)
+	prepareProductionRepository(t, harness.Workspace())
+	makeProductionRepositoryDirty(t, harness.Workspace())
+	binary := buildProductionCommand(t)
+	harness.SetBehavior(t, testpaseo.BehaviorWorking)
+
+	firstProcess := startProductionCommand(t, binary, harness)
+	sessionID := waitForOnlyOwnSession(t, harness, firstProcess)
+	waitForRecordedCommand(t, harness, "wait")
+	if err := firstProcess.command.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("прервать production-команду до перезапуска daemon: %v", err)
+	}
+	firstResult := firstProcess.wait(t)
+	if firstResult.exitCode != 130 {
+		t.Fatalf("прерванная команда вернула код %d вместо 130:\n%s", firstResult.exitCode, firstResult.output)
+	}
+	assertSingleCommand(t, harness.RecordedCommands(t), "run")
+
+	if err := os.Remove(filepath.Join(harness.Workspace(), config.FileName)); err != nil {
+		t.Fatalf("удалить настройки будущей сессии: %v", err)
+	}
+	harness.Restart(t)
+	harness.ResetCommandRecording(t)
+
+	recoveredResult := runProductionCommand(t, binary, harness)
+	if recoveredResult.exitCode != exitObstacle {
+		t.Fatalf(
+			"восстановление после перезапуска daemon вернуло код %d вместо %d:\n%s",
+			recoveredResult.exitCode, exitObstacle, recoveredResult.output,
+		)
+	}
+	if !strings.Contains(recoveredResult.output, "Восстановлена собственная сессия "+sessionID) {
+		t.Fatalf("вывод не подтверждает восстановление сессии %s:\n%s", sessionID, recoveredResult.output)
+	}
+	if !strings.Contains(
+		recoveredResult.output,
+		"Сессия "+sessionID+" закрыта, но Git содержит незакоммиченные изменения.",
+	) {
+		t.Fatalf("вывод не сообщает наблюдаемый после перезапуска исход:\n%s", recoveredResult.output)
+	}
+
+	recoveryCommands := harness.RecordedCommands(t)
+	assertNoPaseoMutations(t, recoveryCommands)
+	assertNoCreationInputReads(t, recoveryCommands)
+	assertOnlyOwnSession(t, harness, sessionID)
+	assertSingleDeliveredPrompt(t, harness)
+}
+
+func TestProductionКомандаВосстанавливаетСессиюПослеНеопределённогоRun(t *testing.T) {
+	t.Parallel()
+	harness := startProductionHarness(t)
+	harness.EnableCommandRecording(t)
+	harness.InterceptRunOutput(t)
+	prepareProductionRepository(t, harness.Workspace())
+	makeProductionRepositoryDirty(t, harness.Workspace())
+	binary := buildProductionCommand(t)
+	harness.SetBehavior(t, testpaseo.BehaviorWorking)
+
+	unknown := runProductionCommand(t, binary, harness)
+	if unknown.exitCode != exitObstacle {
+		t.Fatalf("неопределённый run вернул код %d вместо %d:\n%s", unknown.exitCode, exitObstacle, unknown.output)
+	}
+	if !strings.Contains(unknown.output, "исход создания сессии Paseo не определён") {
+		t.Fatalf("вывод не объясняет неопределённый исход run:\n%s", unknown.output)
+	}
+	for _, private := range []string{
+		strings.TrimSpace(promptsPackageText()),
+		"изменённое отслеживаемое содержимое",
+		"notify.example.invalid/openspec-apply",
+	} {
+		if strings.Contains(unknown.output, private) {
+			t.Fatalf("вывод неопределённого run раскрыл приватные данные %q:\n%s", private, unknown.output)
+		}
+	}
+	assertSingleCommand(t, harness.RecordedCommands(t), "run")
+	if count := harness.InterceptedRunCount(t); count != 1 {
+		t.Fatalf("неопределённый run выполнен %d раз вместо одного", count)
+	}
+	sessions := readOwnSessionIDs(t, harness)
+	if len(sessions) != 1 || sessions[0].ID == "" {
+		t.Fatalf("после неопределённого run не подтверждена одна видимая собственная сессия: %#v", sessions)
+	}
+	sessionID := sessions[0].ID
+	assertSingleDeliveredPrompt(t, harness)
+
+	harness.ResetCommandRecording(t)
+	recoveredProcess := startProductionCommand(t, binary, harness)
+	waitForRecordedCommand(t, harness, "wait")
+	if err := recoveredProcess.command.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("прервать восстановление после неопределённого run: %v", err)
+	}
+	recovered := recoveredProcess.wait(t)
+	if recovered.exitCode != 130 {
+		t.Fatalf("восстановление после неопределённого run вернуло код %d вместо 130:\n%s", recovered.exitCode, recovered.output)
+	}
+	if !strings.Contains(recovered.output, "Восстановлена собственная сессия "+sessionID) {
+		t.Fatalf("вывод не подтверждает восстановление сессии %s:\n%s", sessionID, recovered.output)
+	}
+
+	recoveryCommands := harness.RecordedCommands(t)
+	assertSingleCommand(t, recoveryCommands, "wait")
+	assertNoPaseoMutations(t, recoveryCommands)
+	assertNoCreationInputReads(t, recoveryCommands)
+	if count := harness.InterceptedRunCount(t); count != 1 {
+		t.Fatalf("восстановление повторило неопределённый run: выполнено %d", count)
+	}
+	assertOnlyOwnSession(t, harness, sessionID)
+	assertSingleDeliveredPrompt(t, harness)
+}
+
 func interruptRecoveredProductionCommand(
 	t *testing.T,
 	harness *testpaseo.Harness,
@@ -142,7 +263,7 @@ func interruptRecoveredProductionCommand(
 ) {
 	t.Helper()
 	harness.ResetCommandRecording(t)
-	process := startProductionCommand(t, binary, harness.Workspace())
+	process := startProductionCommand(t, binary, harness)
 	waitForRecordedCommand(t, harness, "wait")
 	if err := process.command.Process.Signal(os.Interrupt); err != nil {
 		t.Fatalf("прервать восстановленную production-команду: %v", err)
@@ -166,7 +287,8 @@ func interruptRecoveredProductionCommand(
 }
 
 func TestProductionКомандаОтклоняетНедостоверныеВходыДоМутацийPaseo(t *testing.T) {
-	harness := testpaseo.Start(t)
+	t.Parallel()
+	harness := startProductionHarness(t)
 	harness.EnableCommandRecording(t)
 	prepareProductionRepository(t, harness.Workspace())
 	makeProductionRepositoryDirty(t, harness.Workspace())
@@ -238,7 +360,7 @@ func TestProductionКомандаОтклоняетНедостоверныеВ�
 			harness.ResetCommandRecording(t)
 			harness.SetCommandFault(t, test.fault)
 			test.configure()
-			result := runProductionCommand(t, buildProductionCommand(t), harness.Workspace())
+			result := runProductionCommand(t, buildProductionCommand(t), harness)
 			if result.exitCode != test.wantCode || !strings.Contains(result.output, test.wantFragment) {
 				t.Fatalf(
 					"получен код %d и вывод:\n%s\nожидались код %d и фрагмент %q",
@@ -251,6 +373,7 @@ func TestProductionКомандаОтклоняетНедостоверныеВ�
 }
 
 func TestProductionКомандаСохраняетСессиюПриПрепятствии(t *testing.T) {
+	t.Parallel()
 	binary := buildProductionCommand(t)
 	tests := []struct {
 		name           string
@@ -292,7 +415,8 @@ func TestProductionКомандаСохраняетСессиюПриПрепя�
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			harness := testpaseo.Start(t)
+			t.Parallel()
+			harness := startProductionHarness(t)
 			harness.EnableCommandRecording(t)
 			harness.SetCommandFault(t, test.fault)
 			prepareProductionRepository(t, harness.Workspace())
@@ -301,9 +425,9 @@ func TestProductionКомандаСохраняетСессиюПриПрепя�
 
 			var result productionCommandResult
 			if test.faultAfterWait == "" {
-				result = runProductionCommand(t, binary, harness.Workspace())
+				result = runProductionCommand(t, binary, harness)
 			} else {
-				process := startProductionCommand(t, binary, harness.Workspace())
+				process := startProductionCommand(t, binary, harness)
 				waitForRecordedCommand(t, harness, "wait")
 				harness.SetCommandFault(t, test.faultAfterWait)
 				harness.SetBehavior(t, testpaseo.BehaviorFinish)
@@ -338,13 +462,20 @@ type productionCommandProcess struct {
 	output  synchronizedBuffer
 }
 
-func runProductionCommand(t *testing.T, binary, workingDirectory string) productionCommandResult {
+func startProductionHarness(t *testing.T) *testpaseo.Harness {
 	t.Helper()
-	process := startProductionCommand(t, binary, workingDirectory)
+	productionIntegrationSlots <- struct{}{}
+	t.Cleanup(func() { <-productionIntegrationSlots })
+	return testpaseo.StartIsolated(t)
+}
+
+func runProductionCommand(t *testing.T, binary string, harness *testpaseo.Harness) productionCommandResult {
+	t.Helper()
+	process := startProductionCommand(t, binary, harness)
 	return process.wait(t)
 }
 
-func startProductionCommand(t *testing.T, binary, workingDirectory string) *productionCommandProcess {
+func startProductionCommand(t *testing.T, binary string, harness *testpaseo.Harness) *productionCommandProcess {
 	t.Helper()
 	command := exec.Command(
 		binary,
@@ -352,7 +483,8 @@ func startProductionCommand(t *testing.T, binary, workingDirectory string) *prod
 		"--change",
 		productionIntegrationChange,
 	)
-	command.Dir = workingDirectory
+	command.Dir = harness.Workspace()
+	command.Env = harness.Environment()
 	process := &productionCommandProcess{command: command}
 	command.Stdout = &process.output
 	command.Stderr = &process.output
@@ -369,7 +501,7 @@ func (process *productionCommandProcess) wait(t *testing.T) productionCommandRes
 	var err error
 	select {
 	case err = <-finished:
-	case <-time.After(45 * time.Second):
+	case <-time.After(productionIntegrationEventTimeout):
 		_ = process.command.Process.Kill()
 		<-finished
 		t.Fatalf("production-команда не завершилась вовремя:\n%s", process.output.String())
@@ -404,7 +536,7 @@ func waitForOnlyOwnSession(
 	process *productionCommandProcess,
 ) string {
 	t.Helper()
-	deadline := time.Now().Add(40 * time.Second)
+	deadline := time.Now().Add(productionIntegrationEventTimeout)
 	for time.Now().Before(deadline) {
 		sessions := readOwnSessionIDs(t, harness)
 		if len(sessions) == 1 && sessions[0].ID != "" {
@@ -444,7 +576,7 @@ func readOwnSessionIDs(t *testing.T, harness *testpaseo.Harness) []activeSession
 
 func waitForCleanGit(t *testing.T, root string) {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(productionIntegrationEventTimeout)
 	for time.Now().Before(deadline) {
 		if gitOutput(t, root, "status", "--porcelain=v1") == "" {
 			return
@@ -545,9 +677,34 @@ func assertNoPaseoMutations(t *testing.T, commands [][]string) {
 	}
 }
 
+func assertNoCreationInputReads(t *testing.T, commands [][]string) {
+	t.Helper()
+	for _, command := range commands {
+		if len(command) >= 2 && command[0] == "provider" {
+			t.Fatalf("восстановление прочитало каталог новой сессии: %#v", commands)
+		}
+	}
+}
+
+func assertOnlyOwnSession(t *testing.T, harness *testpaseo.Harness, expectedID string) {
+	t.Helper()
+	sessions := readOwnSessionIDs(t, harness)
+	if len(sessions) != 1 || sessions[0].ID != expectedID {
+		t.Fatalf("ожидалась одна собственная сессия %s, получено %#v", expectedID, sessions)
+	}
+}
+
+func assertSingleDeliveredPrompt(t *testing.T, harness *testpaseo.Harness) {
+	t.Helper()
+	delivered := harness.Prompts(t)
+	if len(delivered) != 1 || strings.TrimSpace(delivered[0]) != strings.TrimSpace(promptsPackageText()) {
+		t.Fatalf("ожидалось одно исходное поручение без повторной доставки, получено %#v", delivered)
+	}
+}
+
 func waitForRecordedCommand(t *testing.T, harness *testpaseo.Harness, name string) {
 	t.Helper()
-	deadline := time.Now().Add(45 * time.Second)
+	deadline := time.Now().Add(productionIntegrationEventTimeout)
 	for time.Now().Before(deadline) {
 		if commandIndex(harness.RecordedCommands(t), name, 0) >= 0 {
 			return

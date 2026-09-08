@@ -103,6 +103,7 @@ type DriverProcess struct {
 
 type Harness struct {
 	cliPath     string
+	path        string
 	home        string
 	listen      string
 	host        string
@@ -115,9 +116,24 @@ type Harness struct {
 	mutationLog string
 	commandLog  string
 	faultPath   string
+
+	exportEnvironment bool
+	recordCommands    bool
+	recordMutations   bool
+	dropRunOutput     bool
 }
 
 func Start(t *testing.T) *Harness {
+	t.Helper()
+	return start(t, true)
+}
+
+func StartIsolated(t *testing.T) *Harness {
+	t.Helper()
+	return start(t, false)
+}
+
+func start(t *testing.T, exportEnvironment bool) *Harness {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("интеграционный стенд Paseo поддерживается только на Linux")
@@ -140,6 +156,7 @@ func Start(t *testing.T) *Harness {
 
 	harness := &Harness{
 		cliPath:     cliPath,
+		path:        os.Getenv("PATH"),
 		home:        home,
 		listen:      filepath.Join(home, "daemon.sock"),
 		workspace:   filepath.Join(home, "workspace"),
@@ -151,6 +168,8 @@ func Start(t *testing.T) *Harness {
 		mutationLog: filepath.Join(home, "intercepted-mutations.log"),
 		commandLog:  filepath.Join(home, "commands.jsonl"),
 		faultPath:   filepath.Join(home, "proxy.fault"),
+
+		exportEnvironment: exportEnvironment,
 	}
 	harness.host = "unix://" + harness.listen
 	for _, directory := range []string{harness.workspace, harness.changeRoot} {
@@ -170,7 +189,9 @@ func Start(t *testing.T) *Harness {
 		t.Fatalf("записать изолированную конфигурацию Paseo: %v", err)
 	}
 
-	setProcessEnvironment(t, harness)
+	if exportEnvironment {
+		setProcessEnvironment(t, harness)
+	}
 	result, err := harness.runCLI(
 		"daemon", "start",
 		"--home", harness.home,
@@ -188,6 +209,10 @@ func Start(t *testing.T) *Harness {
 
 func (harness *Harness) Workspace() string {
 	return harness.workspace
+}
+
+func (harness *Harness) Environment() []string {
+	return harness.environment()
 }
 
 func (harness *Harness) SetBehavior(t *testing.T, behavior Behavior) {
@@ -211,20 +236,28 @@ func (harness *Harness) InterceptRunOutput(t *testing.T) {
 	if err := os.WriteFile(harness.mutationLog, nil, 0o600); err != nil {
 		t.Fatalf("подготовить журнал изменяющих команд: %v", err)
 	}
-	t.Setenv("OA_TESTPASEO_REAL_CLI", harness.cliPath)
-	t.Setenv("OA_TESTPASEO_MUTATION_LOG", harness.mutationLog)
-	t.Setenv("OA_TESTPASEO_DROP_RUN_OUTPUT", "1")
-	t.Setenv("PATH", filepath.Dir(harness.proxyPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	harness.recordMutations = true
+	harness.dropRunOutput = true
+	if harness.exportEnvironment {
+		t.Setenv("OA_TESTPASEO_REAL_CLI", harness.cliPath)
+		t.Setenv("OA_TESTPASEO_MUTATION_LOG", harness.mutationLog)
+		t.Setenv("OA_TESTPASEO_DROP_RUN_OUTPUT", "1")
+		t.Setenv("PATH", harness.proxyPathEnvironment())
+	}
 }
 
 func (harness *Harness) EnableCommandRecording(t *testing.T) {
 	t.Helper()
 	harness.ResetCommandRecording(t)
-	t.Setenv("OA_TESTPASEO_REAL_CLI", harness.cliPath)
-	t.Setenv("OA_TESTPASEO_COMMAND_LOG", harness.commandLog)
-	t.Setenv("OA_TESTPASEO_DROP_RUN_OUTPUT", "")
-	t.Setenv("OA_TESTPASEO_FAULT_FILE", harness.faultPath)
-	t.Setenv("PATH", filepath.Dir(harness.proxyPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	harness.recordCommands = true
+	harness.dropRunOutput = false
+	if harness.exportEnvironment {
+		t.Setenv("OA_TESTPASEO_REAL_CLI", harness.cliPath)
+		t.Setenv("OA_TESTPASEO_COMMAND_LOG", harness.commandLog)
+		t.Setenv("OA_TESTPASEO_DROP_RUN_OUTPUT", "")
+		t.Setenv("OA_TESTPASEO_FAULT_FILE", harness.faultPath)
+		t.Setenv("PATH", harness.proxyPathEnvironment())
+	}
 }
 
 func (harness *Harness) ResetCommandRecording(t *testing.T) {
@@ -545,16 +578,50 @@ func (harness *Harness) runCLI(args ...string) (CLIResult, error) {
 }
 
 func (harness *Harness) environment() []string {
+	proxyEnabled := harness.recordCommands || harness.recordMutations || harness.dropRunOutput
+	path := harness.path
+	if proxyEnabled {
+		path = harness.proxyPathEnvironment()
+	}
 	environment := removeEnvironment(
 		os.Environ(),
 		"PASEO_HOME", "PASEO_HOST", "PASEO_LISTEN", "PASEO_AGENT_ID", "PASEO_WORKSPACE_ID",
+		"OA_TESTPASEO_REAL_CLI", "OA_TESTPASEO_MUTATION_LOG", "OA_TESTPASEO_COMMAND_LOG",
+		"OA_TESTPASEO_DROP_RUN_OUTPUT", "OA_TESTPASEO_FAULT_FILE", "OA_TESTPASEO_FAULT",
+		"PATH",
 	)
-	return append(
+	environment = append(
 		environment,
 		"PASEO_HOME="+harness.home,
 		"PASEO_HOST="+harness.host,
 		"PASEO_LISTEN="+harness.listen,
+		"PATH="+path,
 	)
+	if !proxyEnabled {
+		return environment
+	}
+	environment = append(
+		environment,
+		"OA_TESTPASEO_REAL_CLI="+harness.cliPath,
+	)
+	if harness.recordCommands {
+		environment = append(
+			environment,
+			"OA_TESTPASEO_COMMAND_LOG="+harness.commandLog,
+			"OA_TESTPASEO_FAULT_FILE="+harness.faultPath,
+		)
+	}
+	if harness.recordMutations {
+		environment = append(environment, "OA_TESTPASEO_MUTATION_LOG="+harness.mutationLog)
+	}
+	if harness.dropRunOutput {
+		environment = append(environment, "OA_TESTPASEO_DROP_RUN_OUTPUT=1")
+	}
+	return environment
+}
+
+func (harness *Harness) proxyPathEnvironment() string {
+	return filepath.Dir(harness.proxyPath) + string(os.PathListSeparator) + harness.path
 }
 
 func (harness *Harness) completeDriverRequest(t *testing.T, request DriverRequest) DriverRequest {

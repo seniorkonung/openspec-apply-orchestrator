@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	integrationChange = "integration-process-recovery"
-	integrationPrompt = "Ожидать сигнала стенда и не изменять рабочий каталог."
+	integrationChange       = "integration-process-recovery"
+	integrationPrompt       = "Ожидать сигнала стенда и не изменять рабочий каталог."
+	integrationEventTimeout = 90 * time.Second
 )
 
 func TestСопровождениеПродолжаетсяВНовыхПроцессахИНеТрогаетЧужиеСессии(t *testing.T) {
@@ -130,7 +131,7 @@ func waitForOwnIntegrationSession(
 	if err != nil {
 		t.Fatalf("создать ключ change: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), integrationEventTimeout)
 	defer cancel()
 	for {
 		client, err := paseo.NewClient()
@@ -167,7 +168,7 @@ func waitForTurnFinished(
 	if err != nil {
 		t.Fatalf("создать ключ change: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), integrationEventTimeout)
 	defer cancel()
 	client, err := paseo.NewClient()
 	if err != nil {
@@ -202,7 +203,7 @@ func waitForPermission(
 	if err != nil {
 		t.Fatalf("создать ключ change: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), integrationEventTimeout)
 	defer cancel()
 	client, err := paseo.NewClient()
 	if err != nil {
