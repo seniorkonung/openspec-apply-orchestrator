@@ -34,6 +34,18 @@ type CLIResult struct {
 	Stderr []byte
 }
 
+type CommandPhase string
+
+const (
+	CommandStarted  CommandPhase = "started"
+	CommandFinished CommandPhase = "finished"
+)
+
+type CommandEvent struct {
+	Phase     CommandPhase `json:"phase"`
+	Arguments []string     `json:"arguments"`
+}
+
 type Behavior string
 
 const (
@@ -115,6 +127,7 @@ type Harness struct {
 	proxyPath   string
 	mutationLog string
 	commandLog  string
+	eventLog    string
 	faultPath   string
 
 	exportEnvironment bool
@@ -167,6 +180,7 @@ func start(t *testing.T, exportEnvironment bool) *Harness {
 		proxyPath:   filepath.Join(home, "proxy-bin", "paseo"),
 		mutationLog: filepath.Join(home, "intercepted-mutations.log"),
 		commandLog:  filepath.Join(home, "commands.jsonl"),
+		eventLog:    filepath.Join(home, "command-events.jsonl"),
 		faultPath:   filepath.Join(home, "proxy.fault"),
 
 		exportEnvironment: exportEnvironment,
@@ -265,6 +279,9 @@ func (harness *Harness) ResetCommandRecording(t *testing.T) {
 	if err := os.WriteFile(harness.commandLog, nil, 0o600); err != nil {
 		t.Fatalf("очистить журнал команд Paseo: %v", err)
 	}
+	if err := os.WriteFile(harness.eventLog, nil, 0o600); err != nil {
+		t.Fatalf("очистить журнал событий команд Paseo: %v", err)
+	}
 }
 
 func (harness *Harness) SetCommandFault(t *testing.T, fault string) {
@@ -297,6 +314,34 @@ func (harness *Harness) RecordedCommands(t *testing.T) [][]string {
 		commands = append(commands, arguments)
 	}
 	return commands
+}
+
+func (harness *Harness) RecordedCommandEvents(t *testing.T) []CommandEvent {
+	t.Helper()
+	content, err := os.ReadFile(harness.eventLog)
+	if err != nil {
+		t.Fatalf("прочитать журнал событий команд Paseo: %v", err)
+	}
+	events := make([]CommandEvent, 0)
+	for index, line := range bytes.Split(bytes.TrimSpace(content), []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		var event CommandEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatalf("прочитать событие команды Paseo %d: %v", index+1, err)
+		}
+		switch event.Phase {
+		case CommandStarted, CommandFinished:
+		default:
+			t.Fatalf("прочитать фазу события команды Paseo %d: %q", index+1, event.Phase)
+		}
+		if len(event.Arguments) == 0 {
+			t.Fatalf("событие команды Paseo %d не содержит аргументы", index+1)
+		}
+		events = append(events, event)
+	}
+	return events
 }
 
 func (harness *Harness) InterceptedRunCount(t *testing.T) int {
@@ -587,6 +632,7 @@ func (harness *Harness) environment() []string {
 		os.Environ(),
 		"PASEO_HOME", "PASEO_HOST", "PASEO_LISTEN", "PASEO_AGENT_ID", "PASEO_WORKSPACE_ID",
 		"OA_TESTPASEO_REAL_CLI", "OA_TESTPASEO_MUTATION_LOG", "OA_TESTPASEO_COMMAND_LOG",
+		"OA_TESTPASEO_COMMAND_EVENT_LOG",
 		"OA_TESTPASEO_DROP_RUN_OUTPUT", "OA_TESTPASEO_FAULT_FILE", "OA_TESTPASEO_FAULT",
 		"PATH",
 	)
@@ -608,6 +654,7 @@ func (harness *Harness) environment() []string {
 		environment = append(
 			environment,
 			"OA_TESTPASEO_COMMAND_LOG="+harness.commandLog,
+			"OA_TESTPASEO_COMMAND_EVENT_LOG="+harness.eventLog,
 			"OA_TESTPASEO_FAULT_FILE="+harness.faultPath,
 		)
 	}

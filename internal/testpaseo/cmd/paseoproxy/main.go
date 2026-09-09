@@ -12,28 +12,54 @@ import (
 	"strings"
 )
 
+type commandPhase string
+
+const (
+	commandStarted  commandPhase = "started"
+	commandFinished commandPhase = "finished"
+)
+
+type commandEvent struct {
+	Phase     commandPhase `json:"phase"`
+	Arguments []string     `json:"arguments"`
+}
+
 func main() {
-	realCLI := os.Getenv("OA_TESTPASEO_REAL_CLI")
-	if realCLI == "" {
-		fmt.Fprintln(os.Stderr, "не задан путь настоящего paseo")
-		os.Exit(2)
-	}
-	if err := recordCommand(os.Args[1:]); err != nil {
+	arguments := os.Args[1:]
+	if err := recordCommandEvent(commandStarted, arguments); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	if handled, code := injectFault(os.Args[1:]); handled {
-		os.Exit(code)
+	exitCode := run(arguments)
+	if err := recordCommandEvent(commandFinished, arguments); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
 	}
-	mutation := mutationName(os.Args[1:])
+	os.Exit(exitCode)
+}
+
+func run(arguments []string) int {
+	realCLI := os.Getenv("OA_TESTPASEO_REAL_CLI")
+	if realCLI == "" {
+		fmt.Fprintln(os.Stderr, "не задан путь настоящего paseo")
+		return 2
+	}
+	if err := recordCommand(arguments); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	if handled, code := injectFault(arguments); handled {
+		return code
+	}
+	mutation := mutationName(arguments)
 	if mutation != "" && os.Getenv("OA_TESTPASEO_MUTATION_LOG") != "" {
 		if err := recordMutation(mutation); err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(2)
+			return 2
 		}
 	}
 
-	command := exec.Command(realCLI, os.Args[1:]...)
+	command := exec.Command(realCLI, arguments...)
 	command.Stdin = os.Stdin
 	command.Stderr = os.Stderr
 	if mutation != "run" || os.Getenv("OA_TESTPASEO_DROP_RUN_OUTPUT") != "1" {
@@ -42,11 +68,12 @@ func main() {
 	if err := command.Run(); err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
-			os.Exit(exitError.ExitCode())
+			return exitError.ExitCode()
 		}
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		return 2
 	}
+	return 0
 }
 
 func injectFault(arguments []string) (bool, int) {
@@ -111,6 +138,27 @@ func recordCommand(arguments []string) error {
 	defer file.Close()
 	if _, err := file.Write(encoded); err != nil {
 		return fmt.Errorf("записать команду Paseo: %w", err)
+	}
+	return nil
+}
+
+func recordCommandEvent(phase commandPhase, arguments []string) error {
+	path := os.Getenv("OA_TESTPASEO_COMMAND_EVENT_LOG")
+	if path == "" {
+		return nil
+	}
+	encoded, err := json.Marshal(commandEvent{Phase: phase, Arguments: arguments})
+	if err != nil {
+		return fmt.Errorf("собрать событие команды Paseo: %w", err)
+	}
+	encoded = append(encoded, '\n')
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("открыть журнал событий команд Paseo: %w", err)
+	}
+	defer file.Close()
+	if _, err := file.Write(encoded); err != nil {
+		return fmt.Errorf("записать событие команды Paseo: %w", err)
 	}
 	return nil
 }
