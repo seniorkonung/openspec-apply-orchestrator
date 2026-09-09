@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -109,6 +110,11 @@ type Config struct {
 	intervention      InterventionChannel
 }
 
+type Snapshot struct {
+	document  string
+	readError error
+}
+
 func (config Config) Version() int {
 	return config.version
 }
@@ -122,37 +128,104 @@ func (config Config) InterventionChannel() InterventionChannel {
 }
 
 func Read(root RepositoryRoot) (Config, error) {
+	return ReadSnapshot(root).config()
+}
+
+func ReadSnapshot(root RepositoryRoot) Snapshot {
+	document, err := readDocument(root)
+	return Snapshot{document: string(document), readError: err}
+}
+
+func (snapshot Snapshot) CommitPreparation() (UntrustedAgentSettings, error) {
+	_, root, err := snapshot.root()
+	if err != nil {
+		return UntrustedAgentSettings{}, err
+	}
+	return decodeCommitPreparation(root)
+}
+
+func (snapshot Snapshot) InterventionChannel() (InterventionChannel, error) {
+	_, root, err := snapshot.root()
+	if err != nil {
+		return InterventionChannel{}, err
+	}
+	return decodeInterventionFromRoot(root)
+}
+
+func (snapshot Snapshot) config() (Config, error) {
+	version, root, err := snapshot.root()
+	if err != nil {
+		return Config{}, err
+	}
+	commitPreparation, err := decodeCommitPreparation(root)
+	if err != nil {
+		return Config{}, err
+	}
+	intervention, err := decodeInterventionFromRoot(root)
+	if err != nil {
+		return Config{}, err
+	}
+	return Config{
+		version:           version,
+		commitPreparation: commitPreparation,
+		intervention:      intervention,
+	}, nil
+}
+
+func (snapshot Snapshot) root() (int, map[string]json.RawMessage, error) {
+	if snapshot.readError != nil {
+		return 0, nil, snapshot.readError
+	}
+	document := []byte(snapshot.document)
+	if err := validateJSONDocument(document); err != nil {
+		return 0, nil, err
+	}
+	root, err := decodeObject(document, "")
+	if err != nil {
+		return 0, nil, err
+	}
+	if err := validateObjectFields(root, "", []string{"version", "sessions", "notifications"}, []string{"version"}); err != nil {
+		return 0, nil, err
+	}
+	version, err := decodeVersion(root["version"])
+	if err != nil {
+		return 0, nil, err
+	}
+	return version, root, nil
+}
+
+func readDocument(root RepositoryRoot) ([]byte, error) {
 	validatedRoot, err := NewRepositoryRoot(root.path)
 	if err != nil || validatedRoot != root {
-		return Config{}, ErrInvalidRoot
+		return nil, ErrInvalidRoot
 	}
 	path, err := resolveConfigPath(root.path)
 	if err != nil {
-		return Config{}, err
+		return nil, err
 	}
 	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return Config{}, ErrConfigNotFound
+			return nil, ErrConfigNotFound
 		}
-		return Config{}, fmt.Errorf("%w: %v", ErrReadConfig, err)
+		return nil, fmt.Errorf("%w: %v", ErrReadConfig, err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return Config{}, fmt.Errorf("%w: получить сведения о файле: %v", ErrReadConfig, err)
+		return nil, fmt.Errorf("%w: получить сведения о файле: %v", ErrReadConfig, err)
 	}
 	if !info.Mode().IsRegular() {
-		return Config{}, fmt.Errorf("%w: путь конфигурации не является обычным файлом", ErrReadConfig)
+		return nil, fmt.Errorf("%w: путь конфигурации не является обычным файлом", ErrReadConfig)
 	}
 	document, err := io.ReadAll(io.LimitReader(file, maximumConfigBytes+1))
 	if err != nil {
-		return Config{}, fmt.Errorf("%w: %v", ErrReadConfig, err)
+		return nil, fmt.Errorf("%w: %v", ErrReadConfig, err)
 	}
 	if len(document) > maximumConfigBytes {
-		return Config{}, ErrConfigTooLarge
+		return nil, ErrConfigTooLarge
 	}
-	return parseConfig(document)
+	return document, nil
 }
 
 func resolveConfigPath(root string) (string, error) {
@@ -175,46 +248,27 @@ func resolveConfigPath(root string) (string, error) {
 	return canonical, nil
 }
 
-func parseConfig(document []byte) (Config, error) {
-	if err := validateJSONDocument(document); err != nil {
-		return Config{}, err
+func decodeCommitPreparation(root map[string]json.RawMessage) (UntrustedAgentSettings, error) {
+	rawSessions, present := root["sessions"]
+	if !present {
+		return UntrustedAgentSettings{}, fieldError("sessions", ErrMissingField)
 	}
-	root, err := decodeObject(document, "")
+	sessions, err := decodeObject(rawSessions, "sessions")
 	if err != nil {
-		return Config{}, err
-	}
-	if err := validateObjectFields(root, "", []string{"version", "sessions", "notifications"}, []string{"version", "sessions"}); err != nil {
-		return Config{}, err
-	}
-	version, err := decodeVersion(root["version"])
-	if err != nil {
-		return Config{}, err
-	}
-	sessions, err := decodeObject(root["sessions"], "sessions")
-	if err != nil {
-		return Config{}, err
+		return UntrustedAgentSettings{}, err
 	}
 	if err := validateObjectFields(sessions, "sessions", []string{"commit-preparation"}, []string{"commit-preparation"}); err != nil {
-		return Config{}, err
+		return UntrustedAgentSettings{}, err
 	}
-	commitPreparation, err := decodeAgentSettings(sessions["commit-preparation"])
-	if err != nil {
-		return Config{}, err
-	}
+	return decodeAgentSettings(sessions["commit-preparation"])
+}
 
+func decodeInterventionFromRoot(root map[string]json.RawMessage) (InterventionChannel, error) {
 	rawNotifications, present := root["notifications"]
 	if !present {
-		return Config{}, fieldError("notifications.intervention", ErrMissingField)
+		return InterventionChannel{}, fieldError("notifications.intervention", ErrMissingField)
 	}
-	intervention, err := decodeInterventionChannel(rawNotifications)
-	if err != nil {
-		return Config{}, err
-	}
-	return Config{
-		version:           version,
-		commitPreparation: commitPreparation,
-		intervention:      intervention,
-	}, nil
+	return decodeInterventionChannel(rawNotifications)
 }
 
 func decodeVersion(raw []byte) (int, error) {
