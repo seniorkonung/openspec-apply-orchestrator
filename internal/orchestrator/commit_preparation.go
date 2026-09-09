@@ -223,6 +223,9 @@ func (reconciler *CommitPreparationReconciler) Run(
 			known := selected.session
 			knownSession = &known
 			prepared = PreparedSessionCreation{}
+			if handedToHuman {
+				deliveredEpisode = nil
+			}
 			err = ClassifySourceReadError(
 				ctx,
 				ReadSourcePaseo,
@@ -246,6 +249,7 @@ func (reconciler *CommitPreparationReconciler) Run(
 			known := selected.session
 			knownSession = &known
 			prepared = PreparedSessionCreation{}
+			deliveredEpisode = nil
 			err = reconciler.intervention.pause(ctx, interventionObservationInterval)
 		case completeCommitPreparationAction:
 			need, needsHuman := selected.outcome.(HumanInterventionRequired)

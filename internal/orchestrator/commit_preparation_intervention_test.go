@@ -123,6 +123,156 @@ func TestЗакрытиеПереданнойСессииПриГрязномGit
 	}
 }
 
+func TestНеуспешнаяДоставкаПовторяетсяТолькоПослеСвежегоПодтверждения(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+	gateway := &fakeCommitPreparationGateway{
+		workspace: OneManagedWorkspace{ID: workspace},
+		sessions: ownSessionObservation(
+			t, change, workspace, "session-1", "idle", "permission",
+		),
+		knownObservations: []OwnSessionObservation{
+			ownSessionObservation(t, change, workspace, "session-1", "idle", "permission"),
+			ownSessionObservation(t, change, workspace, "session-1", "closed", ""),
+		},
+		gitStates: []WorkingTreeObservation{DirtyWorkingTree{}},
+	}
+	delivery := &fakeInterventionDelivery{
+		events: &gateway.events,
+		errors: []*notify.DeliveryError{notify.NewDeliveryError(), nil},
+	}
+	reconciler := mustMonitoredCommitPreparationReconciler(t, gateway, delivery, nil)
+
+	if _, err := reconciler.Run(context.Background(), change, "/repo"); err != nil {
+		t.Fatalf("сопроводить с повтором доставки: %v", err)
+	}
+	if delivery.calls != 2 {
+		t.Fatalf("неподтверждённая доставка повторена %d раз вместо двух попыток", delivery.calls)
+	}
+	firstDelivery := indexEvent(gateway.events, "intervention:deliver:permission")
+	observation := indexEvent(gateway.events, "session:observe:session-1")
+	secondDelivery := lastIndexEvent(gateway.events, "intervention:deliver:permission")
+	if firstDelivery < 0 || observation <= firstDelivery || secondDelivery <= observation {
+		t.Fatalf("повтор выполнен без свежего подтверждения потребности: %v", gateway.events)
+	}
+}
+
+func TestНовыйХодЗавершаетПрежнийЭпизодПотребностиВЧеловеке(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+	gateway := &fakeCommitPreparationGateway{
+		workspace: OneManagedWorkspace{ID: workspace},
+		sessions: ownSessionObservation(
+			t, change, workspace, "session-1", "error", "error",
+		),
+		knownObservations: []OwnSessionObservation{
+			ownSessionObservation(t, change, workspace, "session-1", "running", ""),
+			ownSessionObservation(t, change, workspace, "session-1", "error", "error"),
+			ownSessionObservation(t, change, workspace, "session-1", "closed", ""),
+		},
+		gitStates: []WorkingTreeObservation{CleanWorkingTree{}},
+	}
+	delivery := &fakeInterventionDelivery{events: &gateway.events}
+	reconciler := mustMonitoredCommitPreparationReconciler(t, gateway, delivery, nil)
+
+	if _, err := reconciler.Run(context.Background(), change, "/repo"); err != nil {
+		t.Fatalf("сопроводить два эпизода с новым ходом: %v", err)
+	}
+	if delivery.calls != 2 {
+		t.Fatalf("новая потребность после хода должна быть доставлена повторно, попыток: %d", delivery.calls)
+	}
+}
+
+func TestИсчезновениеПотребностиПоЧистомуGitЗавершаетПрежнийЭпизод(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+	gateway := &fakeCommitPreparationGateway{
+		workspace: OneManagedWorkspace{ID: workspace},
+		sessions: ownSessionObservation(
+			t, change, workspace, "session-1", "idle", "finished",
+		),
+		knownObservations: []OwnSessionObservation{
+			ownSessionObservation(t, change, workspace, "session-1", "idle", "finished"),
+			ownSessionObservation(t, change, workspace, "session-1", "idle", "finished"),
+			ownSessionObservation(t, change, workspace, "session-1", "closed", ""),
+		},
+		gitStates: []WorkingTreeObservation{
+			DirtyWorkingTree{},
+			CleanWorkingTree{},
+			DirtyWorkingTree{},
+			CleanWorkingTree{},
+		},
+	}
+	delivery := &fakeInterventionDelivery{events: &gateway.events}
+	reconciler := mustMonitoredCommitPreparationReconciler(t, gateway, delivery, nil)
+
+	if _, err := reconciler.Run(context.Background(), change, "/repo"); err != nil {
+		t.Fatalf("сопроводить повторную потребность после чистого Git: %v", err)
+	}
+	if delivery.calls != 2 {
+		t.Fatalf("возникшая заново потребность должна быть доставлена повторно, попыток: %d", delivery.calls)
+	}
+}
+
+func TestНовыйЗапускМожетПовторитьУведомлениеТойЖеСессии(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+	gateway := &fakeCommitPreparationGateway{
+		workspace: OneManagedWorkspace{ID: workspace},
+		sessions: ownSessionObservation(
+			t, change, workspace, "session-1", "idle", "permission",
+		),
+	}
+	delivery := &fakeInterventionDelivery{events: &gateway.events}
+	reconciler := mustMonitoredCommitPreparationReconciler(
+		t,
+		gateway,
+		delivery,
+		[]error{context.Canceled, context.Canceled},
+	)
+
+	for run := 1; run <= 2; run++ {
+		_, err := reconciler.Run(context.Background(), change, "/repo")
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("запуск %d должен остановиться отдельной отменой, получено %v", run, err)
+		}
+		var obstacle *SourceReadObstacle
+		if errors.As(err, &obstacle) {
+			t.Fatalf("отмена запуска %d стала ошибкой источника: %v", run, err)
+		}
+	}
+	if delivery.calls != 2 {
+		t.Fatalf("новый запуск не повторил уведомление, попыток: %d", delivery.calls)
+	}
+}
+
+func TestОшибкаИсточникаПослеПередачиНеПодменяетсяОшибкойДоставки(t *testing.T) {
+	change := mustChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustWorkspaceID(t, "workspace-1")
+	readErr := errors.New("paseo inspect недоступен")
+	gateway := &fakeCommitPreparationGateway{
+		workspace: OneManagedWorkspace{ID: workspace},
+		sessions: ownSessionObservation(
+			t, change, workspace, "session-1", "error", "error",
+		),
+		observeErr: readErr,
+	}
+	delivery := &fakeInterventionDelivery{
+		events: &gateway.events,
+		errors: []*notify.DeliveryError{notify.NewDeliveryError()},
+	}
+	reconciler := mustMonitoredCommitPreparationReconciler(t, gateway, delivery, nil)
+
+	outcome, err := reconciler.Run(context.Background(), change, "/repo")
+	if outcome != nil {
+		t.Fatalf("ошибка источника признана исходом: %#v", outcome)
+	}
+	assertSourceReadObstacle(t, err, ReadSourcePaseo, readErr)
+	if delivery.calls != 1 {
+		t.Fatalf("ошибка доставки неожиданно изменила число попыток: %d", delivery.calls)
+	}
+}
+
 type fakeInterventionDelivery struct {
 	events *([]string)
 	calls  int
@@ -198,6 +348,15 @@ func interventionReasonName(reason notify.Reason) string {
 	default:
 		return "unknown"
 	}
+}
+
+func lastIndexEvent(events []string, target string) int {
+	for index := len(events) - 1; index >= 0; index-- {
+		if events[index] == target {
+			return index
+		}
+	}
+	return -1
 }
 
 var _ notify.Deliverer = (*fakeInterventionDelivery)(nil)
