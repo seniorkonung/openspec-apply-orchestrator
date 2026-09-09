@@ -275,13 +275,6 @@ func TestInspectПодтверждаетИдентичностьCWDИОтсут�
 			expected: ErrForeignSessionParent,
 		},
 		{
-			name: "inspect содержит неизвестное поле",
-			mutate: func(inspect map[string]any) {
-				inspect["Token"] = "секрет"
-			},
-			expected: ErrUnexpectedJSON,
-		},
-		{
 			name: "архивированная сессия одновременно работает",
 			mutate: func(inspect map[string]any) {
 				inspect["Archived"] = true
@@ -316,6 +309,29 @@ func TestInspectПодтверждаетИдентичностьCWDИОтсут�
 				t.Fatalf("ошибка раскрыла непроверенный JSON: %v", err)
 			}
 		})
+	}
+}
+
+func TestСведенияОСессииДопускаютНовыеНеиспользуемыеПоля(t *testing.T) {
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	workspace := mustDirectoryWorkspaceID(t, "workspace-1")
+	cwd := t.TempDir()
+	listItem := agentListItem("agent-123", "агент", "running", cwd)
+	listItem["НовоеПоле"] = map[string]any{"значение": true}
+	agents := encodeDirectoryJSON(t, []map[string]any{listItem})
+	client := newFakeClient(t)
+	t.Setenv("FAKE_PASEO_LS_BROAD", agents)
+	t.Setenv("FAKE_PASEO_LS_EXACT", agents)
+	inspection := agentInspection("agent-123", "running", cwd)
+	inspection["НовоеПоле"] = map[string]any{"секрет": "не переносить"}
+	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, inspection))
+
+	observation, err := client.FindOwnSessions(context.Background(), change, workspace, cwd)
+	if err != nil {
+		t.Fatalf("найти сессию с аддитивными полями: %v", err)
+	}
+	if _, ok := observation.(orchestrator.WorkingOwnSession); !ok {
+		t.Fatalf("ожидалась работающая сессия, получено %T", observation)
 	}
 }
 

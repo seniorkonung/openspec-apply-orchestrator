@@ -25,6 +25,8 @@ var (
 	ErrDaemonUnavailable         = errors.New("paseo daemon недоступен")
 	ErrDaemonOwnerMismatch       = errors.New("paseo daemon принадлежит другому пользователю")
 	ErrInvalidServerID           = errors.New("paseo status не содержит допустимый serverId")
+	ErrInvalidSessionQuery       = errors.New("некорректный запрос сессий paseo")
+	ErrSessionIdentityMismatch   = errors.New("inspect вернул другую сессию")
 )
 
 type CommandExitError struct {

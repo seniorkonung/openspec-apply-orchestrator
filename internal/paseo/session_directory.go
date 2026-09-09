@@ -13,6 +13,11 @@ type labelFilter struct {
 	value string
 }
 
+type listedAgent struct {
+	id    orchestrator.SessionID
+	state paseocli.SessionState
+}
+
 func (client *Client) FindOwnSessions(
 	ctx context.Context,
 	change orchestrator.ChangeKey,
@@ -128,7 +133,7 @@ func (client *Client) inspectOwnSession(
 	if err != nil {
 		return nil, err
 	}
-	raw, err := inspection.toUntrustedSession(expectedID, change, workspace, canonicalCWD)
+	raw, err := inspectionToUntrustedSession(inspection, expectedID, change, workspace, canonicalCWD)
 	if err != nil {
 		return nil, err
 	}
@@ -136,28 +141,30 @@ func (client *Client) inspectOwnSession(
 }
 
 func (client *Client) listAgents(ctx context.Context, filters []labelFilter) ([]listedAgent, error) {
-	args := []string{"ls", "--global"}
+	labels := make([]paseocli.SessionLabel, 0, len(filters))
 	for _, filter := range filters {
-		args = append(args, "--label", filter.key+"="+filter.value)
+		labels = append(labels, paseocli.SessionLabel{Key: filter.key, Value: filter.value})
 	}
-	args = append(args, "--json")
-
-	output, err := client.adapter.Run(ctx, paseocli.Invocation{Name: "ls", Arguments: args})
+	sessions, err := client.adapter.ListSessions(ctx, labels)
 	if err != nil {
 		return nil, err
 	}
-	return decodeAgentList(output)
+	agents := make([]listedAgent, 0, len(sessions))
+	for index, session := range sessions {
+		id, err := orchestrator.NewSessionID(session.ID())
+		if err != nil {
+			return nil, fmt.Errorf("%w: сессия %d содержит некорректный ID", ErrUnexpectedJSON, index+1)
+		}
+		agents = append(agents, listedAgent{id: id, state: session.State()})
+	}
+	return agents, nil
 }
 
-func (client *Client) inspectAgent(ctx context.Context, id orchestrator.SessionID) (agentInspectionJSON, error) {
-	output, err := client.adapter.Run(ctx, paseocli.Invocation{
-		Name:      "inspect",
-		Arguments: []string{"inspect", id.String(), "--json"},
-	})
-	if err != nil {
-		return agentInspectionJSON{}, err
-	}
-	return decodeAgentInspection(output)
+func (client *Client) inspectAgent(
+	ctx context.Context,
+	id orchestrator.SessionID,
+) (paseocli.SessionInspection, error) {
+	return client.adapter.InspectSession(ctx, id.String())
 }
 
 func sameAgentSet(left, right []listedAgent) bool {
@@ -183,48 +190,53 @@ func observeListedAgents(
 ) (orchestrator.OwnSessionObservation, error) {
 	raw := make([]orchestrator.UntrustedOwnSession, 0, len(agents))
 	for _, agent := range agents {
-		raw = append(raw, untrustedOwnSession(agent.id, agent.status, false, change, workspace))
+		raw = append(raw, untrustedOwnSession(agent.id, agent.state, false, false, change, workspace))
 	}
 	return orchestrator.ObserveOwnSessions(change, workspace, raw)
 }
 
-func (inspection agentInspectionJSON) toUntrustedSession(
+func inspectionToUntrustedSession(
+	inspection paseocli.SessionInspection,
 	expectedID orchestrator.SessionID,
 	change orchestrator.ChangeKey,
 	workspace orchestrator.WorkspaceID,
 	canonicalCWD string,
 ) (orchestrator.UntrustedOwnSession, error) {
-	if inspection.ID.value != expectedID.String() {
+	if inspection.ID() != expectedID.String() {
 		return orchestrator.UntrustedOwnSession{}, ErrSessionIdentityMismatch
 	}
-	actualCWD, err := canonicalDirectory(inspection.CWD.value)
+	actualCWD, err := canonicalDirectory(inspection.CWD())
 	if err != nil {
 		return orchestrator.UntrustedOwnSession{}, err
 	}
 	if actualCWD != canonicalCWD {
 		return orchestrator.UntrustedOwnSession{}, ErrSessionWorkingDirectoryMismatch
 	}
-	if inspection.ParentAgentID.value != nil {
+	if _, hasParent := inspection.ParentID(); hasParent {
 		return orchestrator.UntrustedOwnSession{}, ErrForeignSessionParent
 	}
-
-	status := inspection.Status.value
-	hasPendingPermission := false
-	if inspection.Archived.value {
-		status = "closed"
-	} else if len(inspection.PendingPermissions.value) > 0 {
-		hasPendingPermission = true
-	}
-	return untrustedOwnSession(expectedID, status, hasPendingPermission, change, workspace), nil
+	return untrustedOwnSession(
+		expectedID,
+		inspection.State(),
+		inspection.Archived(),
+		inspection.HasPendingPermission(),
+		change,
+		workspace,
+	), nil
 }
 
 func untrustedOwnSession(
 	id orchestrator.SessionID,
-	status string,
+	state paseocli.SessionState,
+	archived bool,
 	permission bool,
 	change orchestrator.ChangeKey,
 	workspace orchestrator.WorkspaceID,
 ) orchestrator.UntrustedOwnSession {
+	status := sessionStateName(state)
+	if archived {
+		status = "closed"
+	}
 	requiresAttention := permission
 	reason := ""
 	switch {
@@ -253,5 +265,22 @@ func untrustedOwnSession(
 			orchestrator.LabelKind:      orchestrator.CommitPreparationKind,
 			orchestrator.LabelWorkspace: workspace.String(),
 		},
+	}
+}
+
+func sessionStateName(state paseocli.SessionState) string {
+	switch state {
+	case paseocli.SessionInitializing:
+		return "initializing"
+	case paseocli.SessionIdle:
+		return "idle"
+	case paseocli.SessionRunning:
+		return "running"
+	case paseocli.SessionError:
+		return "error"
+	case paseocli.SessionClosed:
+		return "closed"
+	default:
+		panic("непроверенное состояние сессии Paseo")
 	}
 }

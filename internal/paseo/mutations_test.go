@@ -456,7 +456,7 @@ func mustMutationManagedSession(
 		t.Fatalf("создать идентификатор сессии: %v", err)
 	}
 	observation, err := orchestrator.ObserveOwnSessions(change, workspace, []orchestrator.UntrustedOwnSession{
-		untrustedOwnSession(id, "idle", false, change, workspace),
+		untrustedOwnSession(id, paseocli.SessionIdle, false, false, change, workspace),
 	})
 	if err != nil {
 		t.Fatalf("проверить собственную сессию: %v", err)

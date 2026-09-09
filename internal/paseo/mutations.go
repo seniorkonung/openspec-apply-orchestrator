@@ -201,11 +201,11 @@ func (client *Client) ArchiveOwnSession(
 	if err != nil {
 		return orchestrator.ClassifySourceReadError(ctx, orchestrator.ReadSourcePaseo, err)
 	}
-	if before.Archived.value {
+	if before.Archived() {
 		return nil
 	}
-	if before.Status.value == "initializing" || before.Status.value == "running" ||
-		len(before.PendingPermissions.value) > 0 {
+	if before.State() == paseocli.SessionInitializing || before.State() == paseocli.SessionRunning ||
+		before.HasPendingPermission() {
 		return ErrSessionStillRunning
 	}
 
@@ -228,7 +228,7 @@ func (client *Client) ArchiveOwnSession(
 		orchestrator.ReadSourcePaseo,
 		inspectionErr,
 	)
-	if inspectionErr == nil && after.Archived.value {
+	if inspectionErr == nil && after.Archived() {
 		return nil
 	}
 	if mutationErr != nil {
@@ -267,15 +267,16 @@ func (client *Client) inspectManagedSession(
 	ctx context.Context,
 	workspace ActiveWorkspace,
 	session orchestrator.ManagedSession,
-) (agentInspectionJSON, error) {
+) (paseocli.SessionInspection, error) {
 	inspection, err := client.inspectAgent(ctx, session.ID())
 	if err != nil {
-		return agentInspectionJSON{}, err
+		return paseocli.SessionInspection{}, err
 	}
-	if _, err := inspection.toUntrustedSession(
+	if _, err := inspectionToUntrustedSession(
+		inspection,
 		session.ID(), session.ChangeKey(), session.WorkspaceID(), workspace.cwd,
 	); err != nil {
-		return agentInspectionJSON{}, err
+		return paseocli.SessionInspection{}, err
 	}
 	return inspection, nil
 }

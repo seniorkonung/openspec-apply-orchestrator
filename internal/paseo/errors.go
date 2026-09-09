@@ -41,7 +41,7 @@ var (
 	ErrArchiveNotConfirmed             = errors.New("архивирование сессии Paseo не подтверждено")
 	ErrArchiveOutcomeUnknown           = errors.New("исход архивирования сессии Paseo не определён")
 	ErrCorruptSessionOwnership         = errors.New("признаки принадлежности собственной сессии повреждены")
-	ErrSessionIdentityMismatch         = errors.New("inspect вернул другую сессию")
+	ErrSessionIdentityMismatch         = paseocli.ErrSessionIdentityMismatch
 	ErrSessionWorkingDirectoryMismatch = errors.New("собственная сессия относится к другому рабочему каталогу")
 	ErrForeignSessionParent            = errors.New("сессия имеет чужого родителя")
 	ErrInvalidWaitSessionID            = errors.New("некорректный идентификатор ожидаемой сессии")
