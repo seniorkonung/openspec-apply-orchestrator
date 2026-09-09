@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/config"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/openspec"
@@ -13,7 +12,7 @@ import (
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo"
 )
 
-func reportOutcome(output io.Writer, serverID string, outcome orchestrator.CommitPreparationOutcome) int {
+func reportOutcome(output io.Writer, runtime paseoRuntime, outcome orchestrator.CommitPreparationOutcome) int {
 	switch result := outcome.(type) {
 	case orchestrator.NoCommitPreparationNeeded:
 		fmt.Fprintln(output, "Поручение не требуется: незакоммиченных изменений нет.")
@@ -26,7 +25,7 @@ func reportOutcome(output io.Writer, serverID string, outcome orchestrator.Commi
 			output,
 			"Требуется участие человека: %s. Сессия: %s\n",
 			attentionReason(result.Reason()),
-			sessionLink(serverID, result.SessionID()),
+			runtime.SessionLink(result.SessionID()),
 		)
 		return exitObstacle
 	case orchestrator.ClosedSessionWithChanges:
@@ -88,8 +87,4 @@ func attentionReason(reason orchestrator.SessionAttentionReason) string {
 	default:
 		return "причина не распознана"
 	}
-}
-
-func sessionLink(serverID string, sessionID orchestrator.SessionID) string {
-	return "paseo://h/" + url.PathEscape(serverID) + "/agent/" + url.PathEscape(sessionID.String())
 }

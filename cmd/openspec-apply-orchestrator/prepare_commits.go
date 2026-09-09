@@ -47,6 +47,7 @@ type workingTreeRepository interface {
 
 type paseoRuntime interface {
 	ServerID() string
+	SessionLink(orchestrator.SessionID) string
 	FindActiveWorkspace(context.Context, orchestrator.ChangeKey, string) (orchestrator.ManagedWorkspaceObservation, error)
 	FindOwnSessions(context.Context, orchestrator.ChangeKey, orchestrator.WorkspaceID, string) (orchestrator.OwnSessionObservation, error)
 	ObserveOwnSession(context.Context, orchestrator.ChangeKey, orchestrator.WorkspaceID, string, orchestrator.SessionID) (orchestrator.OwnSessionObservation, error)
@@ -192,5 +193,5 @@ func runPrepareCommits(
 	if err != nil {
 		return reportCommandError(output, err)
 	}
-	return reportOutcome(output, paseoRuntime.ServerID(), outcome)
+	return reportOutcome(output, paseoRuntime, outcome)
 }

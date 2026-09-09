@@ -110,7 +110,7 @@ func TestPrepareCommitsВосстанавливаетСессиюБезЧтен�
 	if fixture.inputsLoaded != 0 || fixture.paseo.createdSessions != 0 || fixture.paseo.archivedSessions != 0 {
 		t.Fatalf("восстановление прочитало входы создания или изменило сессию: %v", fixture.events.snapshot())
 	}
-	for _, fragment := range []string{"Восстановлена собственная сессия", "Требуется участие человека", "paseo://h/server-1/agent/session-existing"} {
+	for _, fragment := range []string{"Восстановлена собственная сессия", "Требуется участие человека", "ссылка-сессии:session-existing"} {
 		if !strings.Contains(output.String(), fragment) {
 			t.Fatalf("вывод восстановления не содержит %q: %s", fragment, output.String())
 		}
@@ -460,6 +460,10 @@ type fakePaseoRuntime struct {
 
 func (runtime *fakePaseoRuntime) ServerID() string {
 	return runtime.serverID
+}
+
+func (runtime *fakePaseoRuntime) SessionLink(session orchestrator.SessionID) string {
+	return "ссылка-сессии:" + session.String()
 }
 
 func (runtime *fakePaseoRuntime) FindActiveWorkspace(_ context.Context, _ orchestrator.ChangeKey, _ string) (orchestrator.ManagedWorkspaceObservation, error) {

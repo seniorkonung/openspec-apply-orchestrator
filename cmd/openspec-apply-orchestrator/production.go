@@ -93,62 +93,8 @@ func acquireProductionChangeLock(workingRoot, changeRoot string) (io.Closer, err
 	return environment.AcquireChangeLock()
 }
 
-type productionPaseoRuntime struct {
-	client      *paseo.Client
-	environment paseo.CompatibleEnvironment
-	gateway     *paseo.ReconcileGateway
-}
-
 func openProductionPaseo(ctx context.Context) (paseoRuntime, error) {
-	client, err := paseo.NewClient()
-	if err != nil {
-		return nil, err
-	}
-	environment, err := client.CheckCompatibility(ctx)
-	if err != nil {
-		return nil, err
-	}
-	gateway, err := paseo.NewReconcileGateway(client, environment)
-	if err != nil {
-		return nil, err
-	}
-	return &productionPaseoRuntime{client: client, environment: environment, gateway: gateway}, nil
-}
-
-func (runtime *productionPaseoRuntime) ServerID() string {
-	return runtime.environment.ServerID().String()
-}
-
-func (runtime *productionPaseoRuntime) FindActiveWorkspace(ctx context.Context, change orchestrator.ChangeKey, cwd string) (orchestrator.ManagedWorkspaceObservation, error) {
-	return runtime.gateway.FindActiveWorkspace(ctx, change, cwd)
-}
-
-func (runtime *productionPaseoRuntime) FindOwnSessions(ctx context.Context, change orchestrator.ChangeKey, workspace orchestrator.WorkspaceID, cwd string) (orchestrator.OwnSessionObservation, error) {
-	return runtime.gateway.FindOwnSessions(ctx, change, workspace, cwd)
-}
-
-func (runtime *productionPaseoRuntime) ObserveOwnSession(ctx context.Context, change orchestrator.ChangeKey, workspace orchestrator.WorkspaceID, cwd string, session orchestrator.SessionID) (orchestrator.OwnSessionObservation, error) {
-	return runtime.gateway.ObserveOwnSession(ctx, change, workspace, cwd, session)
-}
-
-func (runtime *productionPaseoRuntime) CreateWorkspace(ctx context.Context, change orchestrator.ChangeKey, cwd string) error {
-	return runtime.gateway.CreateWorkspace(ctx, change, cwd)
-}
-
-func (runtime *productionPaseoRuntime) CreateOwnSession(ctx context.Context, change orchestrator.ChangeKey, workspace orchestrator.WorkspaceID, cwd string, settings paseo.VerifiedSessionSettings, prompt prompts.CommitPreparationPrompt) (orchestrator.SessionID, error) {
-	return runtime.gateway.CreateOwnSession(ctx, change, workspace, cwd, settings, prompt)
-}
-
-func (runtime *productionPaseoRuntime) WaitOwnSession(ctx context.Context, session orchestrator.SessionID) error {
-	return runtime.gateway.WaitOwnSession(ctx, session)
-}
-
-func (runtime *productionPaseoRuntime) ArchiveOwnSession(ctx context.Context, change orchestrator.ChangeKey, workspace orchestrator.WorkspaceID, cwd string, session orchestrator.ManagedSession) error {
-	return runtime.gateway.ArchiveOwnSession(ctx, change, workspace, cwd, session)
-}
-
-func (runtime *productionPaseoRuntime) VerifySessionSettings(ctx context.Context, settings paseo.UntrustedSessionSettings) (paseo.VerifiedSessionSettings, error) {
-	return runtime.client.VerifySessionSettings(ctx, runtime.environment, settings)
+	return paseo.NewRuntime(ctx)
 }
 
 func loadProductionNewSessionInputs(ctx context.Context, root string, runtime paseoRuntime) (newSessionInputs, error) {
