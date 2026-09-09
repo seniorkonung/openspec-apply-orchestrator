@@ -5,7 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/notify"
 )
+
+const interventionObservationInterval = 30 * time.Second
 
 type WorkingTreeObservation interface {
 	isWorkingTreeObservation()
@@ -93,8 +98,19 @@ type CommitPreparationGateway interface {
 	ArchiveOwnSession(context.Context, ChangeKey, WorkspaceID, string, ManagedSession) error
 }
 
+type KnownInterventionSessionFunc func(SessionID) (notify.KnownSession, error)
+
+type interventionPauseFunc func(context.Context, time.Duration) error
+
+type interventionMonitoring struct {
+	delivery     notify.Deliverer
+	knownSession KnownInterventionSessionFunc
+	pause        interventionPauseFunc
+}
+
 type CommitPreparationReconciler struct {
-	gateway CommitPreparationGateway
+	gateway      CommitPreparationGateway
+	intervention *interventionMonitoring
 }
 
 func NewCommitPreparationReconciler(
@@ -104,6 +120,51 @@ func NewCommitPreparationReconciler(
 		return nil, ErrInvalidReconciler
 	}
 	return &CommitPreparationReconciler{gateway: gateway}, nil
+}
+
+func NewMonitoredCommitPreparationReconciler(
+	gateway CommitPreparationGateway,
+	delivery notify.Deliverer,
+	knownSession KnownInterventionSessionFunc,
+) (*CommitPreparationReconciler, error) {
+	return newMonitoredCommitPreparationReconciler(
+		gateway,
+		delivery,
+		knownSession,
+		pauseInterventionObservation,
+	)
+}
+
+func newMonitoredCommitPreparationReconciler(
+	gateway CommitPreparationGateway,
+	delivery notify.Deliverer,
+	knownSession KnownInterventionSessionFunc,
+	pause interventionPauseFunc,
+) (*CommitPreparationReconciler, error) {
+	if delivery == nil || knownSession == nil || pause == nil {
+		return nil, ErrInvalidReconciler
+	}
+	reconciler, err := NewCommitPreparationReconciler(gateway)
+	if err != nil {
+		return nil, err
+	}
+	reconciler.intervention = &interventionMonitoring{
+		delivery:     delivery,
+		knownSession: knownSession,
+		pause:        pause,
+	}
+	return reconciler, nil
+}
+
+func pauseInterventionObservation(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (reconciler *CommitPreparationReconciler) Run(
@@ -118,8 +179,17 @@ func (reconciler *CommitPreparationReconciler) Run(
 
 	var knownSession *SessionID
 	var prepared PreparedSessionCreation
+	var handedToHuman bool
+	var deliveredEpisode *notify.EpisodeKey
 	for {
-		action, err := reconciler.nextAction(ctx, change, cwd, knownSession, prepared.valid())
+		action, err := reconciler.nextAction(
+			ctx,
+			change,
+			cwd,
+			knownSession,
+			prepared.valid(),
+			handedToHuman,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -172,8 +242,29 @@ func (reconciler *CommitPreparationReconciler) Run(
 			if err == nil {
 				return CommitPreparationCompleted{session: known}, nil
 			}
+		case monitorInterventionSessionAction:
+			known := selected.session
+			knownSession = &known
+			prepared = PreparedSessionCreation{}
+			err = reconciler.intervention.pause(ctx, interventionObservationInterval)
 		case completeCommitPreparationAction:
-			return selected.outcome, nil
+			need, needsHuman := selected.outcome.(HumanInterventionRequired)
+			if !needsHuman || reconciler.intervention == nil {
+				return selected.outcome, nil
+			}
+			known := need.SessionID()
+			knownSession = &known
+			prepared = PreparedSessionCreation{}
+			handedToHuman = true
+			deliveredEpisode, err = reconciler.deliverIntervention(
+				ctx,
+				change,
+				need,
+				deliveredEpisode,
+			)
+			if err == nil {
+				err = reconciler.intervention.pause(ctx, interventionObservationInterval)
+			}
 		case stopCommitPreparationAction:
 			return nil, selected.err
 		default:
@@ -195,6 +286,7 @@ func (reconciler *CommitPreparationReconciler) nextAction(
 	cwd string,
 	knownSession *SessionID,
 	hasPreparedCreation bool,
+	handedToHuman bool,
 ) (commitPreparationAction, error) {
 	if err := reconciler.gateway.RefreshActiveChange(ctx, change, cwd); err != nil {
 		return nil, ClassifySourceReadError(ctx, ReadSourceOpenSpec, err)
@@ -248,6 +340,7 @@ func (reconciler *CommitPreparationReconciler) nextAction(
 			cwd,
 			sessions,
 			hasPreparedCreation,
+			handedToHuman,
 		)
 	case AmbiguousManagedWorkspaces:
 		if len(observed.IDs) < 2 {
@@ -281,6 +374,7 @@ func (reconciler *CommitPreparationReconciler) selectSessionAction(
 	cwd string,
 	observation OwnSessionObservation,
 	hasPreparedCreation bool,
+	handedToHuman bool,
 ) (commitPreparationAction, error) {
 	switch observed := observation.(type) {
 	case NoActiveOwnSession:
@@ -302,6 +396,9 @@ func (reconciler *CommitPreparationReconciler) selectSessionAction(
 			}
 			switch state.(type) {
 			case CleanWorkingTree:
+				if handedToHuman {
+					return monitorInterventionSessionAction{session: observed.Session.ID()}, nil
+				}
 				return archiveCommitSessionAction{workspace: workspace, session: observed.Session}, nil
 			case DirtyWorkingTree:
 				return completeCommitPreparationAction{outcome: HumanInterventionRequired{
@@ -369,6 +466,55 @@ func (reconciler *CommitPreparationReconciler) selectSessionAction(
 		"%w: неизвестное состояние рабочего Git",
 		ErrUnexpectedObservation,
 	)}, nil
+}
+
+func (reconciler *CommitPreparationReconciler) deliverIntervention(
+	ctx context.Context,
+	change ChangeKey,
+	need HumanInterventionRequired,
+	deliveredEpisode *notify.EpisodeKey,
+) (*notify.EpisodeKey, error) {
+	knownSession, err := reconciler.intervention.knownSession(need.SessionID())
+	if err != nil {
+		return deliveredEpisode, fmt.Errorf(
+			"%w: построить известную сессию для уведомления: %v",
+			ErrUnexpectedObservation,
+			err,
+		)
+	}
+	reason, err := notificationReason(need.Reason())
+	if err != nil {
+		return deliveredEpisode, err
+	}
+	event, err := notify.NewIntervention(change.String(), reason, knownSession)
+	if err != nil {
+		return deliveredEpisode, fmt.Errorf(
+			"%w: построить событие потребности в человеке: %v",
+			ErrUnexpectedObservation,
+			err,
+		)
+	}
+	episode := event.EpisodeKey()
+	if deliveredEpisode != nil && *deliveredEpisode == episode {
+		return deliveredEpisode, nil
+	}
+	if deliveryErr := reconciler.intervention.delivery.Deliver(ctx, event); deliveryErr != nil {
+		return deliveredEpisode, nil
+	}
+	return &episode, nil
+}
+
+func notificationReason(reason SessionAttentionReason) (notify.Reason, error) {
+	switch reason {
+	case SessionTurnFinished:
+		return notify.ReasonTurnFinished, nil
+	case SessionAgentError:
+		return notify.ReasonAgentError, nil
+	case SessionPermissionRequested:
+		return notify.ReasonPermissionRequested, nil
+	default:
+		return 0, fmt.Errorf("%w: неизвестная причина ожидания", ErrUnexpectedObservation)
+	}
 }
 
 func (reconciler *CommitPreparationReconciler) selectAbsentSessionAction(
@@ -451,6 +597,12 @@ type archiveCommitSessionAction struct {
 }
 
 func (archiveCommitSessionAction) isCommitPreparationAction() {}
+
+type monitorInterventionSessionAction struct {
+	session SessionID
+}
+
+func (monitorInterventionSessionAction) isCommitPreparationAction() {}
 
 type completeCommitPreparationAction struct {
 	outcome CommitPreparationOutcome
