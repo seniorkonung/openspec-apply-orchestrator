@@ -333,7 +333,7 @@
   - **Files likely touched:** `internal/paseo/session_directory.go`, `internal/paseo/session_json.go`, `internal/paseo/wait.go`, `internal/paseo/internal/paseocli/...`, относящиеся тесты.
   - **Estimated scope:** M.
 
-- [ ] 2.20 Изолировать мутации сессий, workspace и ссылки Paseo
+- [x] 2.20 Изолировать мутации сессий, workspace и ссылки Paseo
   - **Acceptance criteria:**
     - Только активный CLI-адаптер формирует аргументы и разбирает ответы `workspace create`, `run` и `archive`, управляет специальными переменными окружения Paseo и строит deep-link; `cmd`, ядро и доменный модуль не знают внешнего формата.
     - Доменный интерфейс по-прежнему допускает создание только из проверенных настроек и встроенного промпта, передаёт точный полный доступ и метки происхождения и не повторяет неопределённую мутацию либо отказ с default.
