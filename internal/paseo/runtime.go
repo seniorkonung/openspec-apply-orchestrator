@@ -2,7 +2,6 @@ package paseo
 
 import (
 	"context"
-	"net/url"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/prompts"
@@ -37,7 +36,7 @@ func (runtime *Runtime) ServerID() string {
 }
 
 func (runtime *Runtime) SessionLink(session orchestrator.SessionID) string {
-	return "paseo://h/" + url.PathEscape(runtime.ServerID()) + "/agent/" + url.PathEscape(session.String())
+	return runtime.environment.value.SessionLink(session.String())
 }
 
 func (runtime *Runtime) FindActiveWorkspace(
