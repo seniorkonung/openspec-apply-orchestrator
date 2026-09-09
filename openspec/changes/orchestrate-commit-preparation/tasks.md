@@ -309,7 +309,7 @@
   - **Files likely touched:** `internal/paseo/command.go`, `internal/paseo/client.go`, `internal/paseo/json.go`, новый модуль `internal/paseo/internal/paseocli`, относящиеся тесты.
   - **Estimated scope:** M.
 
-- [ ] 2.18 Изолировать read-side команды и wire-проекции каталога и workspace Paseo
+- [x] 2.18 Изолировать read-side команды и wire-проекции каталога и workspace Paseo
   - **Acceptance criteria:**
     - Аргументы и wire DTO команд `provider ls`, `provider models` и `workspace ls` находятся только во внутреннем активном адаптере; `internal/paseo` получает минимальные типизированные данные для проверки настроек и выбора активного workspace.
     - Production-разбор требует присутствия и корректного типа используемых полей, закрывает управляющие значения и проверяет межполевые инварианты, но допускает новые неиспользуемые поля ответа.
