@@ -26,7 +26,7 @@ func TestНастройкиПроверяютсяПоКаталогуИЗакр�
 	}))
 	raw := untrustedSettings{provider: "codex", model: "gpt-5.6-sol", reasoning: "high", hasReasoning: true}
 
-	settings, err := client.VerifySessionSettings(context.Background(), compatibleTestEnvironment(), raw)
+	settings, err := client.VerifySessionSettings(context.Background(), compatibleTestEnvironment(t), raw)
 	if err != nil {
 		t.Fatalf("проверить настройки: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestНеобязательныйReasoningНеПодменяетсяЗнач
 
 	settings, err := client.VerifySessionSettings(
 		context.Background(),
-		compatibleTestEnvironment(),
+		compatibleTestEnvironment(t),
 		untrustedSettings{provider: "codex", model: "gpt-5.6-sol"},
 	)
 	if err != nil {
@@ -77,19 +77,19 @@ func TestНедопустимыеНастройкиОтклоняютсяДоМ�
 	}{
 		{
 			name:        "несовместимая версия",
-			environment: CompatibleEnvironment{serverID: ServerID{value: "server-1"}},
+			environment: CompatibleEnvironment{},
 			raw:         untrustedSettings{provider: "codex", model: "gpt-5.6-sol"},
 			want:        ErrIncompatibleCLIVersion,
 		},
 		{
 			name:        "значение похоже на флаг CLI",
-			environment: compatibleTestEnvironment(),
+			environment: compatibleTestEnvironment(t),
 			raw:         untrustedSettings{provider: "--host", model: "gpt-5.6-sol"},
 			want:        ErrInvalidSessionSettings,
 		},
 		{
 			name:        "provider отсутствует",
-			environment: compatibleTestEnvironment(),
+			environment: compatibleTestEnvironment(t),
 			raw:         untrustedSettings{provider: "codex", model: "gpt-5.6-sol"},
 			providers:   []any{},
 			want:        ErrProviderNotFound,
@@ -97,7 +97,7 @@ func TestНедопустимыеНастройкиОтклоняютсяДоМ�
 		},
 		{
 			name:        "пользовательский профиль не поддерживается",
-			environment: compatibleTestEnvironment(),
+			environment: compatibleTestEnvironment(t),
 			raw:         untrustedSettings{provider: "codex-work", model: "gpt-5.6-sol"},
 			providers: []any{
 				providerCatalogItem("codex-work", "available", "Enabled"),
@@ -107,7 +107,7 @@ func TestНедопустимыеНастройкиОтклоняютсяДоМ�
 		},
 		{
 			name:        "встроенный provider без полного режима не поддерживается",
-			environment: compatibleTestEnvironment(),
+			environment: compatibleTestEnvironment(t),
 			raw:         untrustedSettings{provider: "claude", model: "claude-opus"},
 			providers: []any{
 				providerCatalogItem("claude", "available", "Enabled"),
@@ -117,7 +117,7 @@ func TestНедопустимыеНастройкиОтклоняютсяДоМ�
 		},
 		{
 			name:        "provider недоступен",
-			environment: compatibleTestEnvironment(),
+			environment: compatibleTestEnvironment(t),
 			raw:         untrustedSettings{provider: "codex", model: "gpt-5.6-sol"},
 			providers: []any{
 				providerCatalogItem("codex", "unavailable", "Disabled"),
@@ -127,7 +127,7 @@ func TestНедопустимыеНастройкиОтклоняютсяДоМ�
 		},
 		{
 			name:        "model отсутствует",
-			environment: compatibleTestEnvironment(),
+			environment: compatibleTestEnvironment(t),
 			raw:         untrustedSettings{provider: "codex", model: "gpt-5.6-sol"},
 			providers: []any{
 				providerCatalogItem("codex", "available", "Enabled"),
@@ -138,7 +138,7 @@ func TestНедопустимыеНастройкиОтклоняютсяДоМ�
 		},
 		{
 			name:        "reasoning отсутствует",
-			environment: compatibleTestEnvironment(),
+			environment: compatibleTestEnvironment(t),
 			raw: untrustedSettings{
 				provider: "codex", model: "gpt-5.6-sol", reasoning: "ultra", hasReasoning: true,
 			},

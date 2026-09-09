@@ -8,11 +8,27 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
+
+type adapterConfig struct {
+	timeout     time.Duration
+	stdoutLimit int
+	stderrLimit int
+}
+
+func defaultAdapterConfig() adapterConfig {
+	return adapterConfig{
+		timeout:     10 * time.Second,
+		stdoutLimit: 1 << 20,
+		stderrLimit: 1 << 20,
+	}
+}
 
 func TestКомандаПередаётАргументыБезShell(t *testing.T) {
 	recordPath := filepath.Join(t.TempDir(), "аргументы")
-	runner := newFakeRunner(t, runnerConfig{
+	runner := newFakeAdapter(t, adapterConfig{
 		timeout:     time.Second,
 		stdoutLimit: 1024,
 		stderrLimit: 1024,
@@ -21,9 +37,9 @@ func TestКомандаПередаётАргументыБезShell(t *testing.
 	t.Setenv("FAKE_PASEO_STDOUT", `{"ok":true}`)
 
 	argument := `$(touch НЕ_ВЫПОЛНЯТЬ); значение с пробелами`
-	stdout, err := runner.run(context.Background(), command{
-		name: "status",
-		args: []string{"status", "--json", argument},
+	stdout, err := runner.Run(context.Background(), paseocli.Invocation{
+		Name:      "status",
+		Arguments: []string{"status", "--json", argument},
 	})
 	if err != nil {
 		t.Fatalf("выполнить команду: %v", err)
@@ -42,7 +58,7 @@ func TestКомандаПередаётАргументыБезShell(t *testing.
 }
 
 func TestНеуспешноеЗавершениеКомандыИмеетТипизированнуюОшибку(t *testing.T) {
-	runner := newFakeRunner(t, runnerConfig{
+	runner := newFakeAdapter(t, adapterConfig{
 		timeout:     time.Second,
 		stdoutLimit: 1024,
 		stderrLimit: 1024,
@@ -51,7 +67,9 @@ func TestНеуспешноеЗавершениеКомандыИмеетТип�
 	t.Setenv("FAKE_PASEO_STDERR", "секретный токен")
 	t.Setenv("FAKE_PASEO_EXIT", "17")
 
-	_, err := runner.run(context.Background(), command{name: "status", args: []string{"status", "--json"}})
+	_, err := runner.Run(context.Background(), paseocli.Invocation{
+		Name: "status", Arguments: []string{"status", "--json"},
+	})
 	if !errors.Is(err, ErrCommandExit) {
 		t.Fatalf("ожидалась ошибка кода завершения, получено %v", err)
 	}
@@ -69,21 +87,23 @@ func TestНеуспешноеЗавершениеКомандыИмеетТип�
 
 func TestТаймаутИОтменаРазличаются(t *testing.T) {
 	t.Run("таймаут команды", func(t *testing.T) {
-		runner := newFakeRunner(t, runnerConfig{
+		runner := newFakeAdapter(t, adapterConfig{
 			timeout:     20 * time.Millisecond,
 			stdoutLimit: 1024,
 			stderrLimit: 1024,
 		})
 		t.Setenv("FAKE_PASEO_SLEEP", "5")
 
-		_, err := runner.run(context.Background(), command{name: "status", args: []string{"status", "--json"}})
+		_, err := runner.Run(context.Background(), paseocli.Invocation{
+			Name: "status", Arguments: []string{"status", "--json"},
+		})
 		if !errors.Is(err, ErrCommandTimeout) {
 			t.Fatalf("ожидался тайм-аут, получено %v", err)
 		}
 	})
 
 	t.Run("отмена вызывающего контекста", func(t *testing.T) {
-		runner := newFakeRunner(t, runnerConfig{
+		runner := newFakeAdapter(t, adapterConfig{
 			timeout:     time.Second,
 			stdoutLimit: 1024,
 			stderrLimit: 1024,
@@ -92,7 +112,9 @@ func TestТаймаутИОтменаРазличаются(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := runner.run(ctx, command{name: "status", args: []string{"status", "--json"}})
+		_, err := runner.Run(ctx, paseocli.Invocation{
+			Name: "status", Arguments: []string{"status", "--json"},
+		})
 		if !errors.Is(err, ErrCommandCanceled) {
 			t.Fatalf("ожидалась отмена, получено %v", err)
 		}
@@ -104,21 +126,23 @@ func TestТаймаутИОтменаРазличаются(t *testing.T) {
 
 func TestПереполнениеStdoutИStderrРазличается(t *testing.T) {
 	t.Run("stdout", func(t *testing.T) {
-		runner := newFakeRunner(t, runnerConfig{
+		runner := newFakeAdapter(t, adapterConfig{
 			timeout:     time.Second,
 			stdoutLimit: 8,
 			stderrLimit: 1024,
 		})
 		t.Setenv("FAKE_PASEO_STDOUT", "123456789")
 
-		_, err := runner.run(context.Background(), command{name: "status", args: []string{"status"}})
+		_, err := runner.Run(context.Background(), paseocli.Invocation{
+			Name: "status", Arguments: []string{"status"},
+		})
 		if !errors.Is(err, ErrStdoutLimit) {
 			t.Fatalf("ожидалось переполнение stdout, получено %v", err)
 		}
 	})
 
 	t.Run("stderr", func(t *testing.T) {
-		runner := newFakeRunner(t, runnerConfig{
+		runner := newFakeAdapter(t, adapterConfig{
 			timeout:     time.Second,
 			stdoutLimit: 1024,
 			stderrLimit: 8,
@@ -126,7 +150,9 @@ func TestПереполнениеStdoutИStderrРазличается(t *testing
 		t.Setenv("FAKE_PASEO_STDERR", "123456789")
 		t.Setenv("FAKE_PASEO_EXIT", "1")
 
-		_, err := runner.run(context.Background(), command{name: "status", args: []string{"status"}})
+		_, err := runner.Run(context.Background(), paseocli.Invocation{
+			Name: "status", Arguments: []string{"status"},
+		})
 		if !errors.Is(err, ErrStderrLimit) {
 			t.Fatalf("ожидалось переполнение stderr, получено %v", err)
 		}
@@ -136,21 +162,23 @@ func TestПереполнениеStdoutИStderrРазличается(t *testing
 func TestОтсутствующийPaseoИНекорректныеЛимитыОтклоняются(t *testing.T) {
 	t.Run("исполняемый файл не найден", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
-		_, err := newRunner(defaultRunnerConfig())
+		_, err := paseocli.NewWithConfig(toPaseoRunnerConfig(defaultAdapterConfig()))
 		if !errors.Is(err, ErrExecutableNotFound) {
 			t.Fatalf("ожидалась ошибка поиска paseo, получено %v", err)
 		}
 	})
 
 	t.Run("нулевой лимит", func(t *testing.T) {
-		_, err := newRunner(runnerConfig{timeout: time.Second, stdoutLimit: 0, stderrLimit: 1})
+		_, err := paseocli.NewWithConfig(toPaseoRunnerConfig(adapterConfig{
+			timeout: time.Second, stdoutLimit: 0, stderrLimit: 1,
+		}))
 		if !errors.Is(err, ErrInvalidRunnerConfig) {
 			t.Fatalf("ожидалась ошибка конфигурации, получено %v", err)
 		}
 	})
 }
 
-func newFakeRunner(t *testing.T, config runnerConfig) *runner {
+func newFakeAdapter(t *testing.T, config adapterConfig) *paseocli.Adapter {
 	t.Helper()
 	dir := t.TempDir()
 	executable := filepath.Join(dir, "paseo")
@@ -219,9 +247,17 @@ exit "${FAKE_PASEO_EXIT:-0}"
 	}
 	t.Setenv("PATH", dir)
 
-	runner, err := newRunner(config)
+	runner, err := paseocli.NewWithConfig(toPaseoRunnerConfig(config))
 	if err != nil {
 		t.Fatalf("создать исполнитель команд: %v", err)
 	}
 	return runner
+}
+
+func toPaseoRunnerConfig(config adapterConfig) paseocli.RunnerConfig {
+	return paseocli.RunnerConfig{
+		Timeout:     config.timeout,
+		StdoutLimit: config.stdoutLimit,
+		StderrLimit: config.stderrLimit,
+	}
 }

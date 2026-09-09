@@ -245,7 +245,7 @@ func (gateway *ReconcileGateway) findFreshWorkspace(
 }
 
 func (gateway *ReconcileGateway) validate() error {
-	if gateway == nil || gateway.client == nil || gateway.client.runner == nil {
+	if gateway == nil || gateway.client == nil || gateway.client.adapter == nil {
 		return ErrInvalidReconcileGateway
 	}
 	if err := validateCompatibleEnvironment(gateway.environment); err != nil {

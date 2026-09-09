@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
 type providerStatus uint8
@@ -47,9 +49,9 @@ type modelCatalogItemJSON struct {
 }
 
 func (client *Client) readProviderCatalog(ctx context.Context) (map[string]providerCatalogEntry, error) {
-	output, err := client.runner.run(ctx, command{
-		name: "provider ls",
-		args: []string{"provider", "ls", "--json"},
+	output, err := client.adapter.Run(ctx, paseocli.Invocation{
+		Name:      "provider ls",
+		Arguments: []string{"provider", "ls", "--json"},
 	})
 	if err != nil {
 		return nil, err
@@ -64,9 +66,9 @@ func (client *Client) readModelCatalog(
 	if !validCatalogIdentifier(provider) {
 		return nil, ErrInvalidSessionSettings
 	}
-	output, err := client.runner.run(ctx, command{
-		name: "provider models",
-		args: []string{"provider", "models", provider, "--thinking", "--json"},
+	output, err := client.adapter.Run(ctx, paseocli.Invocation{
+		Name:      "provider models",
+		Arguments: []string{"provider", "models", provider, "--thinking", "--json"},
 	})
 	if err != nil {
 		return nil, err

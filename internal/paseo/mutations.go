@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/prompts"
 )
 
@@ -36,9 +37,9 @@ func (client *Client) CreateWorkspace(
 	}
 	expectedName := managedWorkspaceName(change)
 
-	output, err := client.runner.run(ctx, command{
-		name: "workspace create",
-		args: []string{
+	output, err := client.adapter.Run(ctx, paseocli.Invocation{
+		Name: "workspace create",
+		Arguments: []string{
 			"workspace", "create",
 			"--isolation", "local",
 			"--path", canonicalCWD,
@@ -149,12 +150,12 @@ func (client *Client) createOwnSession(
 	}
 	args = append(args, "--json", "--", prompt)
 
-	output, err := client.runner.run(ctx, command{
-		name: "run",
-		args: args,
+	output, err := client.adapter.Run(ctx, paseocli.Invocation{
+		Name:      "run",
+		Arguments: args,
 		// Paseo 0.7.2 выводит родителя из PASEO_AGENT_ID даже при явном --workspace.
 		// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/agent/run.ts
-		unsetEnv: []string{"PASEO_AGENT_ID", "PASEO_WORKSPACE_ID"},
+		UnsetEnvironment: []string{"PASEO_AGENT_ID", "PASEO_WORKSPACE_ID"},
 	})
 	if err != nil {
 		return orchestrator.SessionID{}, unknownRunOutcome(err)
@@ -208,9 +209,9 @@ func (client *Client) ArchiveOwnSession(
 		return ErrSessionStillRunning
 	}
 
-	output, mutationErr := client.runner.run(ctx, command{
-		name: "archive",
-		args: []string{"archive", session.ID().String(), "--json"},
+	output, mutationErr := client.adapter.Run(ctx, paseocli.Invocation{
+		Name:      "archive",
+		Arguments: []string{"archive", session.ID().String(), "--json"},
 	})
 	if mutationErr == nil {
 		result, err := decodeArchivedSession(output)
@@ -290,7 +291,7 @@ func ownSessionLabels(change orchestrator.ChangeKey, workspace orchestrator.Work
 }
 
 func validateCompatibleEnvironment(environment CompatibleEnvironment) error {
-	if environment.serverID.String() == "" || !environment.contract.IsActive() {
+	if !environment.value.IsCompatible() {
 		return ErrIncompatibleCLIVersion
 	}
 	return nil

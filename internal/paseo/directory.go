@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
 const managedWorkspaceNamePrefix = "oa-v1-"
@@ -68,9 +69,9 @@ func (client *Client) FindActiveWorkspace(
 		return nil, err
 	}
 
-	output, err := client.runner.run(ctx, command{
-		name: "workspace ls",
-		args: []string{"workspace", "ls", "--json"},
+	output, err := client.adapter.Run(ctx, paseocli.Invocation{
+		Name:      "workspace ls",
+		Arguments: []string{"workspace", "ls", "--json"},
 	})
 	if err != nil {
 		return nil, err

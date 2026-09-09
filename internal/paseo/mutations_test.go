@@ -22,7 +22,7 @@ func TestWorkspaceСоздаётсяСлужебнымИменемИКанони
 	}
 
 	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
-	environment := compatibleTestEnvironment()
+	environment := compatibleTestEnvironment(t)
 	client := newFakeClient(t)
 	recordPath := filepath.Join(t.TempDir(), "вызовы")
 	t.Setenv("FAKE_PASEO_RECORD", recordPath)
@@ -84,7 +84,7 @@ func TestСобственнаяСессияСоздаётсяОднойФоно�
 	prompt := prompts.CommitPreparation()
 
 	sessionID, err := client.CreateOwnSession(
-		context.Background(), compatibleTestEnvironment(), change, workspace, settings, prompt,
+		context.Background(), compatibleTestEnvironment(t), change, workspace, settings, prompt,
 	)
 	if err != nil {
 		t.Fatalf("создать собственную сессию: %v", err)
@@ -139,7 +139,7 @@ func TestПотерянныйОтветRunДаётНеопределённыйИ
 	t.Setenv("FAKE_PASEO_RUN", "")
 
 	_, err := client.CreateOwnSession(
-		context.Background(), compatibleTestEnvironment(), change, workspace, settings, prompts.CommitPreparation(),
+		context.Background(), compatibleTestEnvironment(t), change, workspace, settings, prompts.CommitPreparation(),
 	)
 	if !errors.Is(err, ErrRunOutcomeUnknown) {
 		t.Fatalf("ожидался неопределённый исход run, получено %v", err)
@@ -172,7 +172,7 @@ func TestОтказRunВПолномРежимеНеВызываетFallback(t *
 
 	_, err := client.CreateOwnSession(
 		context.Background(),
-		compatibleTestEnvironment(),
+		compatibleTestEnvironment(t),
 		change,
 		workspace,
 		verifiedTestSessionSettings("", false),
@@ -231,7 +231,7 @@ func TestНепроверенныеНастройкиНеДоходятДоRun(t
 
 			_, err := client.CreateOwnSession(
 				context.Background(),
-				compatibleTestEnvironment(),
+				compatibleTestEnvironment(t),
 				change,
 				workspace,
 				tt.settings,
@@ -275,7 +275,7 @@ func TestСессияАрхивируетсяБезForceИПодтверждае
 	t.Setenv("FAKE_PASEO_INSPECT_AFTER_ARCHIVE", encodeDirectoryJSON(t, archived))
 
 	if err := client.ArchiveOwnSession(
-		context.Background(), compatibleTestEnvironment(), workspace, session,
+		context.Background(), compatibleTestEnvironment(t), workspace, session,
 	); err != nil {
 		t.Fatalf("архивировать собственную сессию: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestРаботающаяСессияНеАрхивируется(t *testing
 	t.Setenv("FAKE_PASEO_RECORD", recordPath)
 	t.Setenv("FAKE_PASEO_INSPECT", encodeDirectoryJSON(t, agentInspection("agent-123", "running", cwd)))
 
-	err := client.ArchiveOwnSession(context.Background(), compatibleTestEnvironment(), workspace, session)
+	err := client.ArchiveOwnSession(context.Background(), compatibleTestEnvironment(t), workspace, session)
 	if !errors.Is(err, ErrSessionStillRunning) {
 		t.Fatalf("ожидался отказ архивировать работающую сессию, получено %v", err)
 	}
@@ -360,7 +360,7 @@ func TestПотерянныйОтветArchiveРазрешаетсяПовтор
 			t.Setenv("FAKE_PASEO_INSPECT_AFTER_ARCHIVE", encodeDirectoryJSON(t, after))
 
 			err := client.ArchiveOwnSession(
-				context.Background(), compatibleTestEnvironment(), workspace, session,
+				context.Background(), compatibleTestEnvironment(t), workspace, session,
 			)
 			if tt.expected == nil && err != nil {
 				t.Fatalf("подтвердить архивирование через inspect: %v", err)
@@ -384,11 +384,37 @@ func TestПотерянныйОтветArchiveРазрешаетсяПовтор
 	}
 }
 
-func compatibleTestEnvironment() CompatibleEnvironment {
-	return CompatibleEnvironment{
-		serverID: ServerID{value: "server-1"},
-		contract: paseocli.ActiveContract(),
+func compatibleTestEnvironment(t *testing.T) CompatibleEnvironment {
+	t.Helper()
+	dir := t.TempDir()
+	executable := filepath.Join(dir, "paseo")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s' "$OA_TEST_PASEO_VERSION"
+elif [ "$1" = "status" ]; then
+  printf '%s' "$OA_TEST_PASEO_STATUS"
+fi
+`
+	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
+		t.Fatalf("создать paseo для проверенной среды: %v", err)
 	}
+	t.Setenv("PATH", dir)
+	t.Setenv("OA_TEST_PASEO_VERSION", paseocli.ActiveContract().CLIVersion())
+	t.Setenv("OA_TEST_PASEO_STATUS", statusJSON(t, nil))
+	adapter, err := paseocli.NewWithConfig(paseocli.RunnerConfig{
+		Timeout:     defaultAdapterConfig().timeout,
+		StdoutLimit: defaultAdapterConfig().stdoutLimit,
+		StderrLimit: defaultAdapterConfig().stderrLimit,
+	})
+	if err != nil {
+		t.Fatalf("создать адаптер для проверенной среды: %v", err)
+	}
+	client := newClient(adapter, testDaemonOwner)
+	environment, err := client.CheckCompatibility(context.Background())
+	if err != nil {
+		t.Fatalf("создать совместимую тестовую среду: %v", err)
+	}
+	return environment
 }
 
 func verifiedTestSessionSettings(reasoning string, hasReasoning bool) VerifiedSessionSettings {

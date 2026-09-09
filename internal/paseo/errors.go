@@ -2,29 +2,30 @@ package paseo
 
 import (
 	"errors"
-	"fmt"
+
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
 var (
-	ErrExecutableNotFound              = errors.New("исполняемый файл paseo не найден")
-	ErrInvalidRunnerConfig             = errors.New("некорректная конфигурация исполнителя paseo")
-	ErrCommandStart                    = errors.New("не удалось запустить команду paseo")
-	ErrCommandExit                     = errors.New("команда paseo завершилась неуспешно")
-	ErrCommandTimeout                  = errors.New("истёк срок выполнения команды paseo")
-	ErrCommandCanceled                 = errors.New("выполнение команды paseo отменено")
-	ErrStdoutLimit                     = errors.New("stdout команды paseo превысил предел")
-	ErrStderrLimit                     = errors.New("stderr команды paseo превысил предел")
-	ErrEmptyOutput                     = errors.New("команда paseo вернула пустой вывод")
-	ErrTruncatedJSON                   = errors.New("команда paseo вернула обрезанный JSON")
-	ErrUnexpectedJSON                  = errors.New("команда paseo вернула неожиданный JSON")
-	ErrUnexpectedVersionOutput         = errors.New("команда paseo вернула неожиданный вывод версии")
-	ErrIncompatibleCLIVersion          = errors.New("версия paseo CLI несовместима")
-	ErrInconsistentCLIVersion          = errors.New("версии paseo CLI противоречат друг другу")
-	ErrIncompatibleDaemonVersion       = errors.New("версия paseo daemon несовместима")
-	ErrDaemonNotLocal                  = errors.New("локальный paseo daemon не работает")
-	ErrDaemonUnavailable               = errors.New("paseo daemon недоступен")
-	ErrDaemonOwnerMismatch             = errors.New("paseo daemon принадлежит другому пользователю")
-	ErrInvalidServerID                 = errors.New("paseo status не содержит допустимый serverId")
+	ErrExecutableNotFound              = paseocli.ErrExecutableNotFound
+	ErrInvalidRunnerConfig             = paseocli.ErrInvalidRunnerConfig
+	ErrCommandStart                    = paseocli.ErrCommandStart
+	ErrCommandExit                     = paseocli.ErrCommandExit
+	ErrCommandTimeout                  = paseocli.ErrCommandTimeout
+	ErrCommandCanceled                 = paseocli.ErrCommandCanceled
+	ErrStdoutLimit                     = paseocli.ErrStdoutLimit
+	ErrStderrLimit                     = paseocli.ErrStderrLimit
+	ErrEmptyOutput                     = paseocli.ErrEmptyOutput
+	ErrTruncatedJSON                   = paseocli.ErrTruncatedJSON
+	ErrUnexpectedJSON                  = paseocli.ErrUnexpectedJSON
+	ErrUnexpectedVersionOutput         = paseocli.ErrUnexpectedVersionOutput
+	ErrIncompatibleCLIVersion          = paseocli.ErrIncompatibleCLIVersion
+	ErrInconsistentCLIVersion          = paseocli.ErrInconsistentCLIVersion
+	ErrIncompatibleDaemonVersion       = paseocli.ErrIncompatibleDaemonVersion
+	ErrDaemonNotLocal                  = paseocli.ErrDaemonNotLocal
+	ErrDaemonUnavailable               = paseocli.ErrDaemonUnavailable
+	ErrDaemonOwnerMismatch             = paseocli.ErrDaemonOwnerMismatch
+	ErrInvalidServerID                 = paseocli.ErrInvalidServerID
 	ErrCurrentIdentity                 = errors.New("не удалось определить локального владельца paseo daemon")
 	ErrInvalidDirectoryQuery           = errors.New("некорректный запрос к каталогу Paseo")
 	ErrInvalidWorkingDirectory         = errors.New("некорректный рабочий каталог")
@@ -47,24 +48,4 @@ var (
 	ErrWaitSessionIdentityMismatch     = errors.New("wait вернул другую сессию")
 )
 
-type CommandExitError struct {
-	Command     string
-	ExitCode    int
-	StdoutBytes int64
-	StderrBytes int64
-}
-
-func (err *CommandExitError) Error() string {
-	return fmt.Sprintf(
-		"%s: команда %s, код %d, stdout %d байт, stderr %d байт",
-		ErrCommandExit,
-		err.Command,
-		err.ExitCode,
-		err.StdoutBytes,
-		err.StderrBytes,
-	)
-}
-
-func (err *CommandExitError) Unwrap() error {
-	return ErrCommandExit
-}
+type CommandExitError = paseocli.CommandExitError

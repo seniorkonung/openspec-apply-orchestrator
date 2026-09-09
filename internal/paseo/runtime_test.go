@@ -10,7 +10,7 @@ import (
 )
 
 func TestNewRuntimeОднойОперациейПроверяетСредуИФормируетСсылку(t *testing.T) {
-	newFakeRunner(t, defaultRunnerConfig())
+	newFakeAdapter(t, defaultAdapterConfig())
 	owner, err := currentDaemonOwner()
 	if err != nil {
 		t.Fatalf("определить владельца daemon: %v", err)

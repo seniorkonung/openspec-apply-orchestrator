@@ -8,5 +8,5 @@ func compatibleFullAccessMode(
 	environment CompatibleEnvironment,
 	provider string,
 ) (paseocli.FullAccessMode, bool) {
-	return environment.contract.FullAccessMode(provider)
+	return environment.value.FullAccessMode(provider)
 }

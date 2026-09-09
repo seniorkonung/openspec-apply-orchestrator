@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
 type WaitResult interface {
@@ -32,9 +33,9 @@ func (client *Client) Wait(
 		return nil, ErrInvalidWaitSessionID
 	}
 
-	output, err := client.runner.runUntilContextDone(ctx, command{
-		name: "wait",
-		args: []string{"wait", session.String(), "--json"},
+	output, err := client.adapter.RunUntilContextDone(ctx, paseocli.Invocation{
+		Name:      "wait",
+		Arguments: []string{"wait", session.String(), "--json"},
 	})
 	if err != nil {
 		return nil, err

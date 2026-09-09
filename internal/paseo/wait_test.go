@@ -28,7 +28,7 @@ func TestОжиданиеВозвращаетТипизированноеСоб�
 	for _, tt := range tests {
 		t.Run(tt.status, func(t *testing.T) {
 			recordPath := filepath.Join(t.TempDir(), "команды")
-			client := newClient(newFakeRunner(t, runnerConfig{
+			client := newClient(newFakeAdapter(t, adapterConfig{
 				timeout:     20 * time.Millisecond,
 				stdoutLimit: 1024,
 				stderrLimit: 1024,
@@ -56,7 +56,7 @@ func TestОжиданиеВозвращаетТипизированноеСоб�
 }
 
 func TestОжиданиеНеИспользуетКороткийТаймаутИсполнителя(t *testing.T) {
-	client := newClient(newFakeRunner(t, runnerConfig{
+	client := newClient(newFakeAdapter(t, adapterConfig{
 		timeout:     20 * time.Millisecond,
 		stdoutLimit: 1024,
 		stderrLimit: 1024,
@@ -74,7 +74,7 @@ func TestОжиданиеНеИспользуетКороткийТаймаут�
 }
 
 func TestОжиданиеОтменяетсяКонтекстомПроцесса(t *testing.T) {
-	client := newClient(newFakeRunner(t, runnerConfig{
+	client := newClient(newFakeAdapter(t, adapterConfig{
 		timeout:     time.Second,
 		stdoutLimit: 1024,
 		stderrLimit: 1024,
@@ -136,7 +136,7 @@ func TestОжиданиеСтрогоПроверяетJSONИПолныйID(t *t
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := newClient(newFakeRunner(t, runnerConfig{
+			client := newClient(newFakeAdapter(t, adapterConfig{
 				timeout:     time.Second,
 				stdoutLimit: 1024,
 				stderrLimit: 1024,
@@ -153,7 +153,7 @@ func TestОжиданиеСтрогоПроверяетJSONИПолныйID(t *t
 
 func TestОжиданиеНеСохраняетИНераскрываетMessage(t *testing.T) {
 	const activity = "СЕКРЕТНАЯ НЕДАВНЯЯ АКТИВНОСТЬ\nсодержимое разговора"
-	client := newClient(newFakeRunner(t, runnerConfig{
+	client := newClient(newFakeAdapter(t, adapterConfig{
 		timeout:     time.Second,
 		stdoutLimit: 1024,
 		stderrLimit: 1024,
@@ -171,7 +171,7 @@ func TestОжиданиеНеСохраняетИНераскрываетMessage
 
 func TestОжиданиеВозвращаетОшибкиКомандыИЛимита(t *testing.T) {
 	t.Run("ненулевой код", func(t *testing.T) {
-		client := newClient(newFakeRunner(t, runnerConfig{
+		client := newClient(newFakeAdapter(t, adapterConfig{
 			timeout:     time.Second,
 			stdoutLimit: 1024,
 			stderrLimit: 1024,
@@ -189,7 +189,7 @@ func TestОжиданиеВозвращаетОшибкиКомандыИЛим�
 	})
 
 	t.Run("превышение stdout", func(t *testing.T) {
-		client := newClient(newFakeRunner(t, runnerConfig{
+		client := newClient(newFakeAdapter(t, adapterConfig{
 			timeout:     time.Second,
 			stdoutLimit: 32,
 			stderrLimit: 1024,

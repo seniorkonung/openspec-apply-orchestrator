@@ -179,7 +179,7 @@ func TestКаталогНастроекОтклоняетNullВместоСпи�
 
 func TestКаталогНастроекСохраняетОшибкуИсточника(t *testing.T) {
 	t.Run("тайм-аут", func(t *testing.T) {
-		client := newClient(newFakeRunner(t, runnerConfig{
+		client := newClient(newFakeAdapter(t, adapterConfig{
 			timeout:     20 * time.Millisecond,
 			stdoutLimit: 1024,
 			stderrLimit: 1024,
@@ -193,7 +193,7 @@ func TestКаталогНастроекСохраняетОшибкуИсточ�
 	})
 
 	t.Run("превышение размера", func(t *testing.T) {
-		client := newClient(newFakeRunner(t, runnerConfig{
+		client := newClient(newFakeAdapter(t, adapterConfig{
 			timeout:     time.Second,
 			stdoutLimit: 8,
 			stderrLimit: 1024,

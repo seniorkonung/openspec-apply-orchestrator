@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
 type labelFilter struct {
@@ -141,7 +142,7 @@ func (client *Client) listAgents(ctx context.Context, filters []labelFilter) ([]
 	}
 	args = append(args, "--json")
 
-	output, err := client.runner.run(ctx, command{name: "ls", args: args})
+	output, err := client.adapter.Run(ctx, paseocli.Invocation{Name: "ls", Arguments: args})
 	if err != nil {
 		return nil, err
 	}
@@ -149,9 +150,9 @@ func (client *Client) listAgents(ctx context.Context, filters []labelFilter) ([]
 }
 
 func (client *Client) inspectAgent(ctx context.Context, id orchestrator.SessionID) (agentInspectionJSON, error) {
-	output, err := client.runner.run(ctx, command{
-		name: "inspect",
-		args: []string{"inspect", id.String(), "--json"},
+	output, err := client.adapter.Run(ctx, paseocli.Invocation{
+		Name:      "inspect",
+		Arguments: []string{"inspect", id.String(), "--json"},
 	})
 	if err != nil {
 		return agentInspectionJSON{}, err

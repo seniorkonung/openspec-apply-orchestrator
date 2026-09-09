@@ -471,7 +471,7 @@ func TestОшибкаЧтенияПодтвержденияArchiveНеПризн
 
 func newTestReconcileGateway(t *testing.T) *ReconcileGateway {
 	t.Helper()
-	gateway, err := NewReconcileGateway(newFakeClient(t), compatibleTestEnvironment())
+	gateway, err := NewReconcileGateway(newFakeClient(t), compatibleTestEnvironment(t))
 	if err != nil {
 		t.Fatalf("создать gateway сопровождения: %v", err)
 	}

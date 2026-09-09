@@ -28,8 +28,8 @@ func TestРеальныйPaseoСохраняетВидимуюСессиюПос
 	if err != nil {
 		t.Fatalf("подтвердить совместимость: %v", err)
 	}
-	if environment.Version().String() != testpaseo.PaseoVersion || environment.ServerID().String() == "" {
-		t.Fatalf("неожиданная совместимая среда: version=%q server=%q", environment.Version(), environment.ServerID())
+	if environment.ServerID().String() == "" {
+		t.Fatalf("совместимая среда не содержит serverId")
 	}
 
 	change, err := orchestrator.NewChangeKey("integration-recovery")
@@ -110,8 +110,8 @@ func TestРеальныйPaseoСохраняетВидимуюСессиюПос
 		t.Fatalf("полное поручение не сохранилось после перезапуска daemon: %#v", prompts)
 	}
 	t.Logf(
-		"Paseo %s, serverId=%s, workspaceId=%s, sessionId=%s, состояние=%T",
-		restartedEnvironment.Version(), restartedEnvironment.ServerID(), workspace.ID(), sessionID, restartedObservation,
+		"serverId=%s, workspaceId=%s, sessionId=%s, состояние=%T",
+		restartedEnvironment.ServerID(), workspace.ID(), sessionID, restartedObservation,
 	)
 }
 

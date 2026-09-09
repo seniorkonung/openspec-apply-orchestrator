@@ -13,8 +13,11 @@ func compatibleFullAccessMode(
 	environment CompatibleEnvironment,
 	provider string,
 ) (paseocli.FullAccessMode, bool) {
-	if mode, supported := environment.contract.FullAccessMode(provider); supported {
+	if mode, supported := environment.value.FullAccessMode(provider); supported {
 		return mode, true
+	}
+	if !environment.value.IsCompatible() {
+		return paseocli.FullAccessMode{}, false
 	}
 	return paseocli.IntegrationFullAccessMode(provider)
 }
