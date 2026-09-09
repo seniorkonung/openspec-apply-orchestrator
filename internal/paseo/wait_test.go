@@ -118,11 +118,6 @@ func TestОжиданиеСтрогоПроверяетJSONИПолныйID(t *t
 			want:   ErrUnexpectedJSON,
 		},
 		{
-			name:   "неизвестное поле",
-			output: `{"agentId":"agent-123","status":"idle","message":"готово","token":"секрет"}`,
-			want:   ErrUnexpectedJSON,
-		},
-		{
 			name:   "пустой вывод",
 			output: "",
 			want:   ErrEmptyOutput,
@@ -148,6 +143,26 @@ func TestОжиданиеСтрогоПроверяетJSONИПолныйID(t *t
 				t.Fatalf("ожидалась ошибка %v, получено %v", tt.want, err)
 			}
 		})
+	}
+}
+
+func TestОжиданиеДопускаетНовоеНеиспользуемоеПоле(t *testing.T) {
+	client := newClient(newFakeAdapter(t, adapterConfig{
+		timeout:     time.Second,
+		stdoutLimit: 1024,
+		stderrLimit: 1024,
+	}), testDaemonOwner)
+	t.Setenv(
+		"FAKE_PASEO_WAIT",
+		`{"agentId":"agent-123","status":"idle","message":"готово","новое":{"секрет":true}}`,
+	)
+
+	result, err := client.Wait(context.Background(), mustSessionID(t, "agent-123"))
+	if err != nil {
+		t.Fatalf("прочитать аддитивный результат wait: %v", err)
+	}
+	if _, ok := result.(WaitIdle); !ok {
+		t.Fatalf("ожидался результат WaitIdle, получено %T", result)
 	}
 }
 

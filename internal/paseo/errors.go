@@ -44,8 +44,8 @@ var (
 	ErrSessionIdentityMismatch         = paseocli.ErrSessionIdentityMismatch
 	ErrSessionWorkingDirectoryMismatch = errors.New("собственная сессия относится к другому рабочему каталогу")
 	ErrForeignSessionParent            = errors.New("сессия имеет чужого родителя")
-	ErrInvalidWaitSessionID            = errors.New("некорректный идентификатор ожидаемой сессии")
-	ErrWaitSessionIdentityMismatch     = errors.New("wait вернул другую сессию")
+	ErrInvalidWaitSessionID            = paseocli.ErrInvalidWaitSessionID
+	ErrWaitSessionIdentityMismatch     = paseocli.ErrWaitSessionIdentityMismatch
 )
 
 type CommandExitError = paseocli.CommandExitError
