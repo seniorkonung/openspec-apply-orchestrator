@@ -1,0 +1,12 @@
+[
+  {
+    "created": "just now",
+    "cwd": "/tmp/paseo-fixture/workspace",
+    "id": "agent-fixture",
+    "name": "fixture prompt",
+    "provider": "oa-integration/deterministic",
+    "shortId": "agent-fi",
+    "status": "idle",
+    "thinking": "auto"
+  }
+]

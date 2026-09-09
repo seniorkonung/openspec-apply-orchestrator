@@ -76,15 +76,15 @@ func (inspection SessionInspection) ParentID() (string, bool) {
 	return inspection.parentID, inspection.hasParent
 }
 
-// Схема значимых полей JSON команды ls Paseo CLI 0.7.2.
-// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/agent/ls.ts
+// Схема значимых полей JSON команды ls Paseo CLI 0.8.0-beta.1.
+// Источник: https://github.com/getpaseo/paseo/blob/v0.8.0-beta.1/packages/cli/src/commands/agent/ls.ts
 type listedSessionJSON struct {
 	ID     requiredValue[string] `json:"id"`
 	Status requiredValue[string] `json:"status"`
 }
 
-// Схема значимых полей JSON команды inspect Paseo CLI 0.7.2.
-// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/agent/inspect.ts
+// Схема значимых полей JSON команды inspect Paseo CLI 0.8.0-beta.1.
+// Источник: https://github.com/getpaseo/paseo/blob/v0.8.0-beta.1/packages/cli/src/commands/agent/inspect.ts
 type inspectedSessionJSON struct {
 	ID                 requiredValue[string]                  `json:"Id"`
 	Status             requiredValue[string]                  `json:"Status"`

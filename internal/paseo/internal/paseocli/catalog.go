@@ -37,16 +37,16 @@ func (model CatalogModel) Reasoning() []string {
 	return slices.Clone(model.reasoning)
 }
 
-// Схема значимых полей JSON команды provider ls Paseo CLI 0.7.2.
-// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/provider/ls.ts
+// Схема значимых полей JSON команды provider ls Paseo CLI 0.8.0-beta.1.
+// Источник: https://github.com/getpaseo/paseo/blob/v0.8.0-beta.1/packages/cli/src/commands/provider/ls.ts
 type providerCatalogJSON struct {
 	Provider requiredValue[string] `json:"provider"`
 	Status   requiredValue[string] `json:"status"`
 	Enabled  requiredValue[string] `json:"enabled"`
 }
 
-// Схема значимых полей JSON команды provider models --thinking Paseo CLI 0.7.2.
-// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/provider/models.ts
+// Схема значимых полей JSON команды provider models --thinking Paseo CLI 0.8.0-beta.1.
+// Источник: https://github.com/getpaseo/paseo/blob/v0.8.0-beta.1/packages/cli/src/commands/provider/models.ts
 type modelCatalogJSON struct {
 	ID                      requiredValue[string]    `json:"id"`
 	ThinkingOptionIDs       requiredValue[[]string]  `json:"thinkingOptionIds"`

@@ -5,10 +5,10 @@ import "testing"
 func TestАктивныйКонтрактТочноОпределяетВерсииИСистемныйПолныйДоступ(t *testing.T) {
 	contract := ActiveContract()
 
-	if contract.CLIVersion() != "0.7.2" || !contract.MatchesCLIVersion("0.7.2") {
+	if contract.CLIVersion() != "0.8.0-beta.1" || !contract.MatchesCLIVersion("0.8.0-beta.1") {
 		t.Fatalf("активный контракт не требует точную версию CLI: %q", contract.CLIVersion())
 	}
-	if contract.DaemonVersion() != "0.7.2" || !contract.MatchesDaemonVersion("0.7.2") {
+	if contract.DaemonVersion() != "0.8.0-beta.1" || !contract.MatchesDaemonVersion("0.8.0-beta.1") {
 		t.Fatalf("активный контракт не требует точную версию daemon: %q", contract.DaemonVersion())
 	}
 
@@ -25,7 +25,7 @@ func TestАктивныйКонтрактТочноОпределяетВерс�
 func TestАктивныйКонтрактНеВыбираетДругойВыпускProviderИлиDefault(t *testing.T) {
 	contract := ActiveContract()
 
-	for _, version := range []string{"0.7.1", "0.8.0", "^0.7.2", "default"} {
+	for _, version := range []string{"0.7.2", "0.8.0", "^0.8.0-beta.1", "default"} {
 		if contract.MatchesCLIVersion(version) || contract.MatchesDaemonVersion(version) {
 			t.Fatalf("активный контракт принял другой выпуск %q", version)
 		}
@@ -39,8 +39,8 @@ func TestАктивныйКонтрактНеВыбираетДругойВып�
 
 func TestКонтрактБезПолнойСистемнойСемантикиНеСтановитсяАктивным(t *testing.T) {
 	contract := Contract{
-		cliVersion:    "0.7.2",
-		daemonVersion: "0.7.2",
+		cliVersion:    "0.8.0-beta.1",
+		daemonVersion: "0.8.0-beta.1",
 		fullAccess: FullAccessMode{
 			provider: "codex",
 			id:       "full-access",
@@ -48,8 +48,8 @@ func TestКонтрактБезПолнойСистемнойСемантики�
 		},
 	}
 
-	if contract.IsActive() || contract.MatchesCLIVersion("0.7.2") ||
-		contract.MatchesDaemonVersion("0.7.2") {
+	if contract.IsActive() || contract.MatchesCLIVersion("0.8.0-beta.1") ||
+		contract.MatchesDaemonVersion("0.8.0-beta.1") {
 		t.Fatal("неполный контракт был принят как совместимый")
 	}
 	if _, supported := contract.FullAccessMode("codex"); supported {

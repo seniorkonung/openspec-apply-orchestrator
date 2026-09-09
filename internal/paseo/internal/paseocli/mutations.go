@@ -42,8 +42,8 @@ func (session CreatedSession) CWD() string {
 	return session.cwd
 }
 
-// Схема значимых полей JSON команды workspace create Paseo CLI 0.7.2.
-// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/workspace/create.ts
+// Схема значимых полей JSON команды workspace create Paseo CLI 0.8.0-beta.1.
+// Источник: https://github.com/getpaseo/paseo/blob/v0.8.0-beta.1/packages/cli/src/commands/workspace/create.ts
 type createdWorkspaceJSON struct {
 	WorkspaceID requiredValue[string] `json:"workspaceId"`
 	Project     requiredValue[string] `json:"project"`
@@ -52,8 +52,8 @@ type createdWorkspaceJSON struct {
 	CWD         requiredValue[string] `json:"cwd"`
 }
 
-// Схема значимых полей JSON команды run Paseo CLI 0.7.2.
-// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/agent/run.ts
+// Схема значимых полей JSON команды run Paseo CLI 0.8.0-beta.1.
+// Источник: https://github.com/getpaseo/paseo/blob/v0.8.0-beta.1/packages/cli/src/commands/agent/run.ts
 type createdSessionJSON struct {
 	AgentID  requiredValue[string] `json:"agentId"`
 	Status   requiredValue[string] `json:"status"`
@@ -62,8 +62,8 @@ type createdSessionJSON struct {
 	Title    requiredValue[string] `json:"title"`
 }
 
-// Схема значимых полей JSON команды archive Paseo CLI 0.7.2.
-// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/agent/archive.ts
+// Схема значимых полей JSON команды archive Paseo CLI 0.8.0-beta.1.
+// Источник: https://github.com/getpaseo/paseo/blob/v0.8.0-beta.1/packages/cli/src/commands/agent/archive.ts
 type archivedSessionJSON struct {
 	AgentID    requiredValue[string] `json:"agentId"`
 	Status     requiredValue[string] `json:"status"`

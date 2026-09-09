@@ -17,11 +17,12 @@ import (
 )
 
 const (
-	PaseoVersion      = "0.7.2"
+	PaseoVersion      = "0.8.0-beta.1"
 	ProviderID        = "oa-integration"
 	ProfileProviderID = "oa-profile"
 	ModelID           = "deterministic"
 	ModeID            = "integration-unrestricted"
+	UserPluginID      = "oa-contract-fixture"
 )
 
 const (
@@ -129,6 +130,7 @@ type Harness struct {
 	commandLog  string
 	eventLog    string
 	faultPath   string
+	pluginMark  string
 
 	exportEnvironment bool
 	recordCommands    bool
@@ -138,15 +140,20 @@ type Harness struct {
 
 func Start(t *testing.T) *Harness {
 	t.Helper()
-	return start(t, true)
+	return start(t, true, false)
 }
 
 func StartIsolated(t *testing.T) *Harness {
 	t.Helper()
-	return start(t, false)
+	return start(t, false, false)
 }
 
-func start(t *testing.T, exportEnvironment bool) *Harness {
+func StartWithUserPlugin(t *testing.T) *Harness {
+	t.Helper()
+	return start(t, true, true)
+}
+
+func start(t *testing.T, exportEnvironment, withUserPlugin bool) *Harness {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("интеграционный стенд Paseo поддерживается только на Linux")
@@ -182,6 +189,7 @@ func start(t *testing.T, exportEnvironment bool) *Harness {
 		commandLog:  filepath.Join(home, "commands.jsonl"),
 		eventLog:    filepath.Join(home, "command-events.jsonl"),
 		faultPath:   filepath.Join(home, "proxy.fault"),
+		pluginMark:  filepath.Join(home, "user-plugin-observed"),
 
 		exportEnvironment: exportEnvironment,
 	}
@@ -199,7 +207,14 @@ func start(t *testing.T, exportEnvironment bool) *Harness {
 	}
 	buildTestBinary(t, root, harness.proxyPath, "./internal/testpaseo/cmd/paseoproxy")
 	harness.SetBehavior(t, BehaviorFinish)
-	if err := harness.writeConfig(providerPath); err != nil {
+	pluginPath := ""
+	if withUserPlugin {
+		pluginPath = filepath.Join(home, "user-plugin")
+		if err := harness.writeUserPlugin(pluginPath); err != nil {
+			t.Fatalf("подготовить пользовательский плагин Paseo: %v", err)
+		}
+	}
+	if err := harness.writeConfig(providerPath, pluginPath); err != nil {
 		t.Fatalf("записать изолированную конфигурацию Paseo: %v", err)
 	}
 
@@ -218,6 +233,9 @@ func start(t *testing.T, exportEnvironment bool) *Harness {
 	t.Cleanup(func() { harness.stop(t) })
 	harness.waitUntilReady(t)
 	harness.waitUntilProvidersReady(t)
+	if withUserPlugin {
+		harness.waitUntilUserPluginReady(t)
+	}
 	return harness
 }
 
@@ -470,7 +488,19 @@ func (harness *Harness) Prompts(t *testing.T) []string {
 	return prompts
 }
 
-func (harness *Harness) writeConfig(providerPath string) error {
+func (harness *Harness) UserPluginObserved(t *testing.T) bool {
+	t.Helper()
+	content, err := os.ReadFile(harness.pluginMark)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+		t.Fatalf("прочитать отметку пользовательского плагина: %v", err)
+	}
+	return string(content) == "observed\n"
+}
+
+func (harness *Harness) writeConfig(providerPath, pluginPath string) error {
 	config := map[string]any{
 		"version": 1,
 		"daemon": map[string]any{
@@ -510,6 +540,16 @@ func (harness *Harness) writeConfig(providerPath string) error {
 			},
 		},
 	}
+	if pluginPath != "" {
+		config["pluginsEnabled"] = true
+		config["plugins"] = map[string]any{
+			UserPluginID: map[string]any{
+				"source":  "directory",
+				"path":    pluginPath,
+				"enabled": true,
+			},
+		}
+	}
 	encoded, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return fmt.Errorf("собрать JSON: %w", err)
@@ -517,6 +557,31 @@ func (harness *Harness) writeConfig(providerPath string) error {
 	encoded = append(encoded, '\n')
 	if err := os.WriteFile(filepath.Join(harness.home, "config.json"), encoded, 0o600); err != nil {
 		return fmt.Errorf("записать JSON: %w", err)
+	}
+	return nil
+}
+
+func (harness *Harness) writeUserPlugin(pluginPath string) error {
+	if err := os.Mkdir(pluginPath, 0o700); err != nil {
+		return fmt.Errorf("создать каталог плагина: %w", err)
+	}
+	manifest := []byte(`{"id":"` + UserPluginID + `","requirements":{"paseo":">=0.8.0-beta.1 <0.9.0"}}` + "\n")
+	if err := os.WriteFile(filepath.Join(pluginPath, "paseo-plugin.json"), manifest, 0o600); err != nil {
+		return fmt.Errorf("записать manifest плагина: %w", err)
+	}
+	source := fmt.Sprintf(`import { writeFileSync } from "node:fs";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  server.before("agent.create", ({ request }) => {
+    writeFileSync(%q, "observed\n");
+    return request;
+  });
+  return () => {};
+}
+`, harness.pluginMark)
+	if err := os.WriteFile(filepath.Join(pluginPath, "index.server.ts"), []byte(source), 0o600); err != nil {
+		return fmt.Errorf("записать server entry плагина: %w", err)
 	}
 	return nil
 }
@@ -576,6 +641,38 @@ func (harness *Harness) waitUntilProvidersReady(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatalf(
 				"тестовые провайдеры Paseo не готовы: %v\nstdout:\n%s\nstderr:\n%s",
+				lastErr, lastResult.Stdout, lastResult.Stderr,
+			)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func (harness *Harness) waitUntilUserPluginReady(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var lastResult CLIResult
+	var lastErr error
+	for {
+		lastResult, lastErr = harness.runCLI("plugin", "ls", "--json")
+		if lastErr == nil {
+			var plugins []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			}
+			if json.Unmarshal(lastResult.Stdout, &plugins) == nil {
+				for _, plugin := range plugins {
+					if plugin.ID == UserPluginID && plugin.Status == "running" {
+						return
+					}
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf(
+				"пользовательский плагин Paseo не готов: %v\nstdout:\n%s\nstderr:\n%s",
 				lastErr, lastResult.Stdout, lastResult.Stderr,
 			)
 		case <-time.After(100 * time.Millisecond):

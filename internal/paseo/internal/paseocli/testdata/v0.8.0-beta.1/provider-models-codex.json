@@ -1,0 +1,87 @@
+[
+  {
+    "model": "GPT-6-Astra",
+    "id": "gpt-6-astra",
+    "description": "Our most capable model for complex, demanding work.",
+    "thinkingOptionIds": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "defaultThinkingOptionId": "low",
+    "thinkingOptions": "low, medium, high, xhigh, max, ultra"
+  },
+  {
+    "model": "GPT-5.6-Sol",
+    "id": "gpt-5.6-sol",
+    "description": "Reliable agentic workhorse for everyday tasks.",
+    "thinkingOptionIds": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "defaultThinkingOptionId": "low",
+    "thinkingOptions": "low, medium, high, xhigh, max, ultra"
+  },
+  {
+    "model": "GPT-5.6-Terra",
+    "id": "gpt-5.6-terra",
+    "description": "Balanced agentic coding model for everyday work.",
+    "thinkingOptionIds": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "defaultThinkingOptionId": "low",
+    "thinkingOptions": "low, medium, high, xhigh, max, ultra"
+  },
+  {
+    "model": "GPT-5.6-Luna",
+    "id": "gpt-5.6-luna",
+    "description": "Fast and affordable agentic coding model.",
+    "thinkingOptionIds": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "defaultThinkingOptionId": "low",
+    "thinkingOptions": "low, medium, high, xhigh, max"
+  },
+  {
+    "model": "GPT-5.5",
+    "id": "gpt-5.5",
+    "description": "Proven previous-generation model for coding and general work.",
+    "thinkingOptionIds": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "defaultThinkingOptionId": "low",
+    "thinkingOptions": "low, medium, high, xhigh"
+  },
+  {
+    "model": "GPT-5.3-Codex-Spark",
+    "id": "gpt-5.3-codex-spark",
+    "description": "Ultra-fast coding model.",
+    "thinkingOptionIds": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "defaultThinkingOptionId": "low",
+    "thinkingOptions": "low, medium, high, xhigh"
+  }
+]

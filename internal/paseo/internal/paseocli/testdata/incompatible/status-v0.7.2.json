@@ -1,0 +1,19 @@
+{
+  "serverId": "srv_fixture",
+  "localDaemon": "running",
+  "connectedDaemon": "reachable",
+  "home": "/tmp/paseo-fixture",
+  "listen": "/tmp/paseo-fixture/daemon.sock",
+  "relay": "disabled",
+  "hostname": "fixture-host",
+  "pid": 4242,
+  "startedAt": "2026-09-09T11:43:05.064Z",
+  "owner": "1000@fixture-host",
+  "logPath": "/tmp/paseo-fixture/daemon.log",
+  "daemonNode": "/usr/bin/node",
+  "cliNode": "/usr/bin/node",
+  "cliVersion": "0.7.2",
+  "daemonVersion": "0.7.2",
+  "desktopManaged": false,
+  "providers": []
+}

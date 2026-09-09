@@ -1,0 +1,18 @@
+[
+  {
+    "provider": "codex",
+    "label": "Codex",
+    "status": "available",
+    "enabled": "Enabled",
+    "defaultMode": "auto-review",
+    "modes": "Default Permissions, Auto-review, Full Access"
+  },
+  {
+    "provider": "oa-integration",
+    "label": "OpenSpec Apply integration provider",
+    "status": "available",
+    "enabled": "Enabled",
+    "defaultMode": "default",
+    "modes": "Integration unrestricted"
+  }
+]

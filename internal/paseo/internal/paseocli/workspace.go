@@ -25,8 +25,8 @@ func (workspace ActiveWorkspace) CWD() string {
 	return workspace.cwd
 }
 
-// Схема значимых полей JSON команды workspace ls Paseo CLI 0.7.2.
-// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/workspace/shared.ts
+// Схема значимых полей JSON команды workspace ls Paseo CLI 0.8.0-beta.1.
+// Источник: https://github.com/getpaseo/paseo/blob/v0.8.0-beta.1/packages/cli/src/commands/workspace/shared.ts
 type activeWorkspaceJSON struct {
 	WorkspaceID requiredValue[string] `json:"workspaceId"`
 	Name        requiredValue[string] `json:"name"`

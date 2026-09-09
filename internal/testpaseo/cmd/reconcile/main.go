@@ -72,7 +72,7 @@ func execute(ctx context.Context, request input) testpaseo.DriverResult {
 	if err != nil {
 		return failed(result, err)
 	}
-	result.Version = environment.Version().String()
+	result.Version = testpaseo.PaseoVersion
 	result.ServerID = environment.ServerID().String()
 	change, err := orchestrator.NewChangeKey(request.change)
 	if err != nil {

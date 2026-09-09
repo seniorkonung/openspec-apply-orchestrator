@@ -1,0 +1,30 @@
+{
+  "Archived": false,
+  "ArchivedAt": null,
+  "AvailableModes": [
+    {
+      "id": "integration-unrestricted",
+      "label": "Integration unrestricted"
+    }
+  ],
+  "Capabilities": {
+    "DynamicModes": true,
+    "McpServers": true,
+    "Persistence": true,
+    "Streaming": true
+  },
+  "CreatedAt": "2026-09-09T11:43:18.378Z",
+  "Cwd": "/tmp/paseo-fixture/workspace",
+  "Id": "agent-fixture",
+  "LastUsage": null,
+  "Mode": "integration-unrestricted",
+  "Model": "deterministic",
+  "Name": "fixture prompt",
+  "ParentAgentId": null,
+  "PendingPermissions": [],
+  "Provider": "oa-integration",
+  "Status": "idle",
+  "Thinking": "auto",
+  "UpdatedAt": "2026-09-09T11:43:18.390Z",
+  "Worktree": null
+}

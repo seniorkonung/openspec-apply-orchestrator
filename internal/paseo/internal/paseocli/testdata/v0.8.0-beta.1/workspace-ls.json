@@ -1,0 +1,9 @@
+[
+  {
+    "workspaceId": "wks_fixture",
+    "project": "workspace",
+    "name": "oa-fixture",
+    "isolation": "local",
+    "cwd": "/tmp/paseo-fixture/workspace"
+  }
+]

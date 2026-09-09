@@ -5,6 +5,7 @@ package paseo
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -121,6 +122,79 @@ func TestРеальныйPaseoСохраняетВидимуюСессиюПос
 		"serverId=%s, workspaceId=%s, sessionId=%s, состояние=%T",
 		restartedEnvironment.ServerID(), workspace.ID(), sessionID, restartedObservation,
 	)
+}
+
+func TestПользовательскийПлагинНеМеняетПроверяемыйЗапросАдаптера(t *testing.T) {
+	harness := testpaseo.StartWithUserPlugin(t)
+	harness.EnableCommandRecording(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatalf("создать производственный клиент: %v", err)
+	}
+	environment, err := client.CheckCompatibility(ctx)
+	if err != nil {
+		t.Fatalf("подтвердить совместимость: %v", err)
+	}
+	mode, supported := compatibleFullAccessMode(environment, testpaseo.ProviderID)
+	if !supported {
+		t.Fatalf("тестовый провайдер не содержит проверенный режим полного доступа")
+	}
+
+	change, err := orchestrator.NewChangeKey("integration-user-plugin")
+	if err != nil {
+		t.Fatalf("создать ключ change: %v", err)
+	}
+	workspace, err := client.CreateWorkspace(ctx, environment, change, harness.Workspace())
+	if err != nil {
+		t.Fatalf("создать workspace: %v", err)
+	}
+	_, err = client.createOwnSession(
+		ctx,
+		environment,
+		change,
+		workspace,
+		runSessionSettings{
+			provider: testpaseo.ProviderID,
+			model:    testpaseo.ModelID,
+			mode:     mode,
+		},
+		integrationPrompt,
+	)
+	if err != nil {
+		t.Fatalf("создать сессию при включённом пользовательском плагине: %v", err)
+	}
+	if !harness.UserPluginObserved(t) {
+		t.Fatal("включённый пользовательский плагин не наблюдал agent.create")
+	}
+
+	wantRun := []string{
+		"run", "--background",
+		"--workspace", workspace.ID().String(),
+		"--provider", testpaseo.ProviderID,
+		"--model", testpaseo.ModelID,
+		"--mode", testpaseo.ModeID,
+		"--label", orchestrator.LabelOwner + "=" + orchestrator.ManagedOwner,
+		"--label", orchestrator.LabelVersion + "=" + orchestrator.CurrentOwnershipVersion,
+		"--label", orchestrator.LabelChange + "=" + change.String(),
+		"--label", orchestrator.LabelKind + "=" + orchestrator.CommitPreparationKind,
+		"--label", orchestrator.LabelWorkspace + "=" + workspace.ID().String(),
+		"--json", "--", integrationPrompt,
+	}
+	var runCommands [][]string
+	for _, command := range harness.RecordedCommands(t) {
+		if len(command) > 0 && command[0] == "plugin" {
+			t.Fatalf("производственный адаптер запросил топологию плагинов: %#v", command)
+		}
+		if len(command) > 0 && command[0] == "run" {
+			runCommands = append(runCommands, command)
+		}
+	}
+	if len(runCommands) != 1 || !slices.Equal(runCommands[0], wantRun) {
+		t.Fatalf("неожиданные команды run при включённом плагине:\nполучено: %#v\nожидалось: %#v", runCommands, wantRun)
+	}
 }
 
 func TestНеопределённыйRunНеПовторяетсяАНеподдерживаемаяСредаНеМутируетPaseo(t *testing.T) {

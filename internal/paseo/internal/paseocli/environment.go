@@ -219,8 +219,8 @@ func (field *optionalValue[T]) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, &field.value)
 }
 
-// Схема соответствует JSON Paseo CLI 0.7.2 и намеренно отклоняет новые поля.
-// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/daemon/status.ts
+// Схема соответствует JSON Paseo CLI 0.8.0-beta.1 и намеренно отклоняет новые поля.
+// Источник: https://github.com/getpaseo/paseo/blob/v0.8.0-beta.1/packages/cli/src/commands/daemon/status.ts
 type rawStatusJSON struct {
 	ServerID        requiredNullable[string]      `json:"serverId"`
 	LocalDaemon     requiredValue[string]         `json:"localDaemon"`

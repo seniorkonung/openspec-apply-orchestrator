@@ -1,0 +1,5 @@
+{
+  "agentId": "agent-fixture",
+  "message": "Agent is idle.\nLast 5 activity items:\n[User] fixture prompt",
+  "status": "idle"
+}

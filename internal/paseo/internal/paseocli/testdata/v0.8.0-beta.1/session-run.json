@@ -1,0 +1,7 @@
+{
+  "agentId": "agent-fixture",
+  "cwd": "/tmp/paseo-fixture/workspace",
+  "provider": "oa-integration",
+  "status": "running",
+  "title": "fixture prompt"
+}

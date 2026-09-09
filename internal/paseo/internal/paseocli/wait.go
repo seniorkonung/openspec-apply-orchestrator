@@ -15,9 +15,9 @@ const (
 	WaitEventAgentError
 )
 
-// Схема значимых полей JSON команды wait Paseo CLI 0.7.2. Message является
+// Схема значимых полей JSON команды wait Paseo CLI 0.8.0-beta.1. Message является
 // непрозрачным внешним текстом и отбрасывается сразу после проверки типа.
-// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/agent/wait.ts
+// Источник: https://github.com/getpaseo/paseo/blob/v0.8.0-beta.1/packages/cli/src/commands/agent/wait.ts
 type waitResultJSON struct {
 	AgentID requiredValue[string] `json:"agentId"`
 	Status  requiredValue[string] `json:"status"`

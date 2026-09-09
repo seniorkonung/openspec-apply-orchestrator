@@ -345,7 +345,7 @@
   - **Files likely touched:** `internal/paseo/mutations.go`, `internal/paseo/internal/paseocli/...`, `cmd/openspec-apply-orchestrator/reporting.go`, `internal/paseo/mutations_test.go`, `cmd/openspec-apply-orchestrator/prepare_commits_test.go`.
   - **Estimated scope:** M.
 
-- [ ] 2.21 Заменить активный контракт Paseo 0.7.2 на 0.8.0-beta.1
+- [x] 2.21 Заменить активный контракт Paseo 0.7.2 на 0.8.0-beta.1
   - **Acceptance criteria:**
     - Активный адаптер требует ровно Paseo 0.8.0-beta.1 для CLI и daemon; 0.7.2 и иные выпуски отклоняются до мутаций, а ветви обратной совместимости отсутствуют.
     - Для каждой используемой команды снята обезличенная fixture реального 0.8.0-beta.1, подтверждены значимые поля и состояния и точный `codex --mode full-access` с системной семантикой `approvalPolicy=never` и `sandbox=danger-full-access` до пользовательских преобразований внутри Paseo.
