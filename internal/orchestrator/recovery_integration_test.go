@@ -11,7 +11,7 @@ import (
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo"
-	"github.com/seniorkonung/openspec-apply-orchestrator/internal/testpaseo"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/testpaseo"
 )
 
 const (

@@ -85,9 +85,9 @@ func (provider *providerServer) handle(message rpcMessage) error {
 		return provider.respond(message.ID, map[string]any{
 			"sessionId": sessionID,
 			"modes": map[string]any{
-				"currentModeId": ModeID,
+				"currentModeId": ModeID(),
 				"availableModes": []map[string]string{{
-					"id": ModeID, "name": "Integration unrestricted",
+					"id": ModeID(), "name": "Integration unrestricted",
 				}},
 			},
 		})
@@ -159,7 +159,7 @@ func (provider *providerServer) setMode(message rpcMessage) error {
 	if err := json.Unmarshal(message.Params, &params); err != nil {
 		return fmt.Errorf("прочитать режим сессии: %w", err)
 	}
-	if provider.directories[params.SessionID] == "" || params.ModeID != ModeID {
+	if provider.directories[params.SessionID] == "" || params.ModeID != ModeID() {
 		return provider.respondError(message.ID, -32602, "неподдерживаемый режим тестовой сессии")
 	}
 	return provider.respond(message.ID, map[string]any{})

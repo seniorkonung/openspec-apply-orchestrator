@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
-	"github.com/seniorkonung/openspec-apply-orchestrator/internal/testpaseo"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/testpaseo"
 )
 
 const integrationPrompt = "Подтвердить восстановление сессии без изменения рабочего репозитория."
@@ -175,7 +175,7 @@ func TestПользовательскийПлагинНеМеняетПрове�
 		"--workspace", workspace.ID().String(),
 		"--provider", testpaseo.ProviderID,
 		"--model", testpaseo.ModelID,
-		"--mode", testpaseo.ModeID,
+		"--mode", testpaseo.ModeID(),
 		"--label", orchestrator.LabelOwner + "=" + orchestrator.ManagedOwner,
 		"--label", orchestrator.LabelVersion + "=" + orchestrator.CurrentOwnershipVersion,
 		"--label", orchestrator.LabelChange + "=" + change.String(),

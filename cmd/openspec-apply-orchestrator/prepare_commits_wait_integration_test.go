@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/seniorkonung/openspec-apply-orchestrator/internal/testpaseo"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/testpaseo"
 )
 
 func TestProductionКомандаНеОбращаетсяКPaseoВнутриБлокирующегоWait(t *testing.T) {

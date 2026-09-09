@@ -15,8 +15,8 @@ import (
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/config"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/testpaseo"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/prompts"
-	"github.com/seniorkonung/openspec-apply-orchestrator/internal/testpaseo"
 )
 
 const productionIntegrationChange = "integration-commit-preparation"
@@ -632,7 +632,7 @@ func assertIntegrationRunContract(t *testing.T, commands [][]string) {
 	for _, pair := range [][2]string{
 		{"--provider", testpaseo.ProviderID},
 		{"--model", testpaseo.ModelID},
-		{"--mode", testpaseo.ModeID},
+		{"--mode", testpaseo.ModeID()},
 	} {
 		if !containsArgumentPair(run, pair[0], pair[1]) {
 			t.Fatalf("run не содержит точную пару %q %q: %#v", pair[0], pair[1], run)

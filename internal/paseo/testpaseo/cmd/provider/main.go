@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/seniorkonung/openspec-apply-orchestrator/internal/testpaseo"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/testpaseo"
 )
 
 func main() {

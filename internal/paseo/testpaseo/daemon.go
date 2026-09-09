@@ -14,16 +14,28 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
 const (
-	PaseoVersion      = "0.8.0-beta.1"
 	ProviderID        = "oa-integration"
 	ProfileProviderID = "oa-profile"
 	ModelID           = "deterministic"
-	ModeID            = "integration-unrestricted"
 	UserPluginID      = "oa-contract-fixture"
 )
+
+func PaseoVersion() string {
+	return paseocli.ActiveContract().CLIVersion()
+}
+
+func ModeID() string {
+	mode, supported := paseocli.IntegrationFullAccessMode(ProviderID)
+	if !supported {
+		panic("активный интеграционный контракт не содержит режим тестового провайдера")
+	}
+	return mode.ID()
+}
 
 const (
 	controlEnvironment = "OA_TESTPASEO_CONTROL"
@@ -200,12 +212,12 @@ func start(t *testing.T, exportEnvironment, withUserPlugin bool) *Harness {
 		}
 	}
 	providerPath := filepath.Join(home, "test-provider")
-	buildTestBinary(t, root, providerPath, "./internal/testpaseo/cmd/provider")
-	buildTestBinary(t, root, harness.driverPath, "./internal/testpaseo/cmd/reconcile")
+	buildTestBinary(t, root, providerPath, "./internal/paseo/testpaseo/cmd/provider")
+	buildTestBinary(t, root, harness.driverPath, "./internal/paseo/testpaseo/cmd/reconcile")
 	if err := os.Mkdir(filepath.Dir(harness.proxyPath), 0o700); err != nil {
 		t.Fatalf("создать каталог прокси Paseo: %v", err)
 	}
-	buildTestBinary(t, root, harness.proxyPath, "./internal/testpaseo/cmd/paseoproxy")
+	buildTestBinary(t, root, harness.proxyPath, "./internal/paseo/testpaseo/cmd/paseoproxy")
 	harness.SetBehavior(t, BehaviorFinish)
 	pluginPath := ""
 	if withUserPlugin {
@@ -565,7 +577,7 @@ func (harness *Harness) writeUserPlugin(pluginPath string) error {
 	if err := os.Mkdir(pluginPath, 0o700); err != nil {
 		return fmt.Errorf("создать каталог плагина: %w", err)
 	}
-	manifest := []byte(`{"id":"` + UserPluginID + `","requirements":{"paseo":">=0.8.0-beta.1 <0.9.0"}}` + "\n")
+	manifest := []byte(`{"id":"` + UserPluginID + `","requirements":{"paseo":"` + PaseoVersion() + `"}}` + "\n")
 	if err := os.WriteFile(filepath.Join(pluginPath, "paseo-plugin.json"), manifest, 0o600); err != nil {
 		return fmt.Errorf("записать manifest плагина: %w", err)
 	}
@@ -603,8 +615,8 @@ func (harness *Harness) waitUntilReady(t *testing.T) {
 			}
 			if json.Unmarshal(lastResult.Stdout, &status) == nil &&
 				status.LocalDaemon == "running" && status.ConnectedDaemon == "reachable" &&
-				status.CLIVersion == PaseoVersion && status.DaemonVersion != nil &&
-				*status.DaemonVersion == PaseoVersion {
+				status.CLIVersion == PaseoVersion() && status.DaemonVersion != nil &&
+				*status.DaemonVersion == PaseoVersion() {
 				return
 			}
 		}
@@ -817,7 +829,7 @@ func moduleRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("не определить путь исходного файла стенда")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", ".."))
+	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
 }
 
 func buildTestBinary(t *testing.T, root, outputPath, packagePath string) {
