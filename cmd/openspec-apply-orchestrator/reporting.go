@@ -82,8 +82,8 @@ func attentionReason(reason orchestrator.SessionAttentionReason) string {
 		return "ход агента завершён, но Git остаётся изменённым"
 	case orchestrator.SessionAgentError:
 		return "агент сообщил об ошибке"
-	case orchestrator.SessionPermissionCompatibilityViolation:
-		return "Paseo запросил разрешение вопреки режиму полного доступа"
+	case orchestrator.SessionPermissionRequested:
+		return "Paseo запросил разрешение"
 	default:
 		return "причина не распознана"
 	}

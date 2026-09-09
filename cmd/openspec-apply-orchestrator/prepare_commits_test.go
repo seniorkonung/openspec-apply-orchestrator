@@ -117,6 +117,45 @@ func TestPrepareCommitsВосстанавливаетСессиюБезЧтен�
 	}
 }
 
+func TestPrepareCommitsСообщаетФактическийЗапросРазрешенияБезВыводаОПричине(t *testing.T) {
+	fixture := newCommandFixture(t, orchestrator.DirtyWorkingTree{})
+	fixture.paseo.workspaceExists = true
+	fixture.paseo.sessionID = "session-permission"
+	fixture.paseo.sessionStatus = "idle"
+	fixture.paseo.attentionReason = "permission"
+	var output bytes.Buffer
+
+	code := runCommand(
+		context.Background(),
+		[]string{"prepare-commits", "--change", "selected-change"},
+		fixture.workingRoot,
+		&output,
+		fixture.dependencies(),
+	)
+
+	if code != exitObstacle {
+		t.Fatalf("ожидался код препятствия 1, получен %d", code)
+	}
+	if !strings.Contains(output.String(), "Paseo запросил разрешение") {
+		t.Fatalf("вывод не сообщает фактический запрос разрешения: %s", output.String())
+	}
+	report := ""
+	for _, line := range strings.Split(output.String(), "\n") {
+		if strings.Contains(line, "Требуется участие человека") {
+			report = line
+			break
+		}
+	}
+	if report == "" {
+		t.Fatalf("отчёт о потребности в человеке отсутствует: %s", output.String())
+	}
+	for _, forbidden := range []string{"вопреки", "наруш", "совместим", "provider", "plugin"} {
+		if strings.Contains(report, forbidden) {
+			t.Fatalf("отчёт приписал причину запроса разрешения через %q: %s", forbidden, report)
+		}
+	}
+}
+
 func TestPrepareCommitsАрхивируетЗавершённуюСессиюПриЧистомGit(t *testing.T) {
 	fixture := newCommandFixture(t, orchestrator.CleanWorkingTree{})
 	fixture.paseo.workspaceExists = true

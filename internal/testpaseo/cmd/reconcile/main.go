@@ -244,7 +244,7 @@ func observeSession(
 		switch session.Reason {
 		case orchestrator.SessionTurnFinished:
 			result.Observation = testpaseo.ObservationTurnFinished
-		case orchestrator.SessionPermissionCompatibilityViolation:
+		case orchestrator.SessionPermissionRequested:
 			result.Observation = testpaseo.ObservationPermission
 		case orchestrator.SessionAgentError:
 			result.Observation = testpaseo.ObservationAgentError

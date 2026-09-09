@@ -410,7 +410,7 @@ func TestProductionКомандаСохраняетСессиюПриПрепя�
 		{
 			name:         "неожиданный запрос разрешения",
 			behavior:     testpaseo.BehaviorPermission,
-			wantFragment: "Paseo запросил разрешение вопреки режиму полного доступа",
+			wantFragment: "Paseo запросил разрешение",
 		},
 		{
 			name:           "ошибка свежего чтения workspace",

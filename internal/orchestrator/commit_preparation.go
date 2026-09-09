@@ -309,7 +309,7 @@ func (reconciler *CommitPreparationReconciler) selectSessionAction(
 					reason:  observed.Reason,
 				}}, nil
 			}
-		case SessionAgentError, SessionPermissionCompatibilityViolation:
+		case SessionAgentError, SessionPermissionRequested:
 			return completeCommitPreparationAction{outcome: HumanInterventionRequired{
 				session: observed.Session.ID(),
 				reason:  observed.Reason,

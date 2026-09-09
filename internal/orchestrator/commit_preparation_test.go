@@ -257,7 +257,7 @@ func TestОшибкаАгентаИЗапросРазрешенияТребую�
 		want   SessionAttentionReason
 	}{
 		{name: "ошибка агента", status: "error", reason: "error", want: SessionAgentError},
-		{name: "запрос разрешения", status: "idle", reason: "permission", want: SessionPermissionCompatibilityViolation},
+		{name: "запрос разрешения", status: "idle", reason: "permission", want: SessionPermissionRequested},
 	}
 
 	for _, tt := range tests {

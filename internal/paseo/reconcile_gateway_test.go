@@ -271,7 +271,7 @@ func TestЗапросРазрешенияПослеСозданияПолног�
 	}
 	waiting, ok := observation.(orchestrator.OwnSessionAwaitingAction)
 	if !ok || waiting.Session.ID().String() != "agent-created" ||
-		waiting.Reason != orchestrator.SessionPermissionCompatibilityViolation {
+		waiting.Reason != orchestrator.SessionPermissionRequested {
 		t.Fatalf("запрос разрешения не передан человеку в той же сессии: %#v", observation)
 	}
 	recorded := readRecordedCalls(t, recordPath)
