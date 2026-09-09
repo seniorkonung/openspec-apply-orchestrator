@@ -285,7 +285,7 @@
   - **Files likely touched:** Новый `internal/paseo/runtime.go`; `internal/paseo/reconcile_gateway.go`, `internal/orchestrator/session.go`, `internal/orchestrator/reconcile.go`, `cmd/openspec-apply-orchestrator/production.go`, `cmd/openspec-apply-orchestrator/reporting.go`, относящиеся тесты.
   - **Estimated scope:** M.
 
-- [ ] 2.16 Представить текущую интеграцию как один точный активный контракт Paseo
+- [x] 2.16 Представить текущую интеграцию как один точный активный контракт Paseo
   - **Acceptance criteria:**
     - Один `activeContract` владеет точной версией CLI и daemon и системной семантикой встроенного provider и передаваемого режима полного доступа; таблица по версиям, SemVer-диапазон и параллельные реализации отсутствуют.
     - Проверка среды требует точного совпадения установленного CLI и локального daemon с активным контрактом и возвращает доменному модулю только проверенную среду; прежний выпуск после последующей миграции намеренно отклоняется до мутаций.
