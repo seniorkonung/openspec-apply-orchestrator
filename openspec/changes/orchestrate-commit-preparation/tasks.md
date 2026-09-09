@@ -357,7 +357,7 @@
   - **Files likely touched:** `internal/paseo/internal/paseocli/contract.go`, `internal/paseo/internal/paseocli/testdata/...`, `internal/testpaseo/daemon.go`, `internal/testpaseo/provider.go`, относящиеся тесты.
   - **Estimated scope:** M.
 
-- [ ] 2.22 Зафиксировать повторяемый сценарий следующей миграции Paseo и доказать locality
+- [x] 2.22 Зафиксировать повторяемый сценарий следующей миграции Paseo и доказать locality
   - **Acceptance criteria:**
     - Руководство ведёт будущего агента от выбора одного точного выпуска и сравнения upstream через замену активного контракта и fixtures к модульной и сквозной квалификации, явно запрещая многоверсионный реестр, SemVer-диапазон и изменение ядра при сохранённой семантике; доверенная plugin-политика пользователя не превращается в проверку совместимости оркестратора.
     - Production-версия, CLI-команды, wire DTO, provider/mode semantics и deep-link находятся только во внутреннем активном адаптере; процессный стенд перенесён в `internal/paseo/testpaseo` и переиспользует контракт, а необходимые упоминания в документации не являются вторым источником исполняемого поведения.
