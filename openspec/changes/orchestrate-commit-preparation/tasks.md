@@ -321,7 +321,7 @@
   - **Files likely touched:** `internal/paseo/catalog.go`, `internal/paseo/directory.go`, `internal/paseo/internal/paseocli/...`, `internal/paseo/catalog_test.go`, `internal/paseo/directory_test.go`.
   - **Estimated scope:** M.
 
-- [ ] 2.19 Изолировать read-side команды сессий и блокирующее ожидание Paseo
+- [x] 2.19 Изолировать read-side команды сессий и блокирующее ожидание Paseo
   - **Acceptance criteria:**
     - Формат `ls --global --label`, `inspect` и `wait`, включая их аргументы, wire DTO и внешние статусы, принадлежит только активному CLI-адаптеру; доменный модуль получает существующие варианты наблюдения собственной сессии и сигнал события ожидания.
     - Необходимые ID, cwd, архивирование, родитель, permission и состояния проверяются строго, новые неиспользуемые поля допускаются, а непрозрачный `message` отбрасывается внутри адаптера без попадания в ошибки и вывод.
