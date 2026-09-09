@@ -5,11 +5,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/config"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
 var _ UntrustedSessionSettings = config.UntrustedAgentSettings{}
@@ -35,8 +35,9 @@ func TestНастройкиПроверяютсяПоКаталогуИЗакр�
 		!hasReasoning || reasoning != "high" || settings.Mode() != "full-access" {
 		t.Fatalf("неожиданные проверенные настройки: %#v", settings)
 	}
-	if settings.mode.approvalPolicy != "never" || settings.mode.sandbox != "danger-full-access" {
-		t.Fatalf("неверная семантика полного доступа: %#v", settings.mode)
+	expectedMode, supported := paseocli.ActiveContract().FullAccessMode("codex")
+	if !supported || settings.mode != expectedMode {
+		t.Fatalf("настройки не содержат режим активного контракта: %#v", settings.mode)
 	}
 
 	assertOnlyCatalogReads(t, recordPath)
@@ -64,19 +65,6 @@ func TestНеобязательныйReasoningНеПодменяетсяЗнач
 	}
 }
 
-func TestТаблицаПолногоДоступаЗащищенаТочнымиКонтрактнымиФикстурами(t *testing.T) {
-	want := map[compatibilityKey]fullAccessMode{
-		{version: "0.7.2", provider: "codex"}: {
-			id:             "full-access",
-			approvalPolicy: "never",
-			sandbox:        "danger-full-access",
-		},
-	}
-	if !reflect.DeepEqual(fullAccessCompatibility, want) {
-		t.Fatalf("таблица полного доступа не соответствует контрактным фикстурам:\nполучено: %#v\nожидалось: %#v", fullAccessCompatibility, want)
-	}
-}
-
 func TestНедопустимыеНастройкиОтклоняютсяДоМутаций(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -89,7 +77,7 @@ func TestНедопустимыеНастройкиОтклоняютсяДоМ�
 	}{
 		{
 			name:        "несовместимая версия",
-			environment: CompatibleEnvironment{serverID: ServerID{value: "server-1"}, version: Version{value: "0.7.3"}},
+			environment: CompatibleEnvironment{serverID: ServerID{value: "server-1"}},
 			raw:         untrustedSettings{provider: "codex", model: "gpt-5.6-sol"},
 			want:        ErrIncompatibleCLIVersion,
 		},

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
 const testDaemonOwner = "1000@test-host"
@@ -24,7 +26,7 @@ func TestСовместимаяЛокальнаяСредаСтановится�
 	if environment.ServerID().String() != "srv_test123" {
 		t.Fatalf("неожиданный serverId: %q", environment.ServerID().String())
 	}
-	if environment.Version().String() != compatiblePaseoVersion {
+	if environment.Version().String() != paseocli.ActiveContract().CLIVersion() {
 		t.Fatalf("неожиданная версия: %q", environment.Version().String())
 	}
 }
@@ -43,7 +45,7 @@ func TestВерсииCLIИDaemonПроверяютсяДоДоверия(t *test
 		},
 		{
 			name:      "версия CLI в status противоречит --version",
-			cliOutput: compatiblePaseoVersion,
+			cliOutput: paseocli.ActiveContract().CLIVersion(),
 			mutate: func(status map[string]any) {
 				status["cliVersion"] = "0.7.1"
 			},
@@ -51,7 +53,7 @@ func TestВерсииCLIИDaemonПроверяютсяДоДоверия(t *test
 		},
 		{
 			name:      "несовместимая версия daemon",
-			cliOutput: compatiblePaseoVersion,
+			cliOutput: paseocli.ActiveContract().CLIVersion(),
 			mutate: func(status map[string]any) {
 				status["daemonVersion"] = "0.8.0"
 			},
@@ -241,7 +243,7 @@ func newFakeClient(t *testing.T) *Client {
 
 func setCompatibleEnvironment(t *testing.T, mutate func(map[string]any)) {
 	t.Helper()
-	t.Setenv("FAKE_PASEO_VERSION", compatiblePaseoVersion)
+	t.Setenv("FAKE_PASEO_VERSION", paseocli.ActiveContract().CLIVersion())
 	t.Setenv("FAKE_PASEO_STATUS", statusJSON(t, mutate))
 }
 
@@ -261,8 +263,8 @@ func statusJSON(t *testing.T, mutate func(map[string]any)) string {
 		"logPath":         "/tmp/paseo-home/daemon.log",
 		"daemonNode":      "/usr/bin/node",
 		"cliNode":         "/usr/bin/node",
-		"cliVersion":      compatiblePaseoVersion,
-		"daemonVersion":   compatiblePaseoVersion,
+		"cliVersion":      paseocli.ActiveContract().CLIVersion(),
+		"daemonVersion":   paseocli.ActiveContract().DaemonVersion(),
 		"desktopManaged":  false,
 		"providers": []map[string]any{
 			{

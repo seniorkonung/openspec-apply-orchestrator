@@ -290,7 +290,7 @@ func ownSessionLabels(change orchestrator.ChangeKey, workspace orchestrator.Work
 }
 
 func validateCompatibleEnvironment(environment CompatibleEnvironment) error {
-	if environment.serverID.String() == "" || environment.version.String() != compatiblePaseoVersion {
+	if environment.serverID.String() == "" || !environment.contract.IsActive() {
 		return ErrIncompatibleCLIVersion
 	}
 	return nil

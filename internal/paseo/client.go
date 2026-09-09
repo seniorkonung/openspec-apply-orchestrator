@@ -7,12 +7,11 @@ import (
 	"os/user"
 	"regexp"
 	"strings"
+
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
-const (
-	compatiblePaseoVersion = "0.7.2"
-	maxPaseoVersionLength  = 64
-)
+const maxPaseoVersionLength = 64
 
 var paseoVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
 
@@ -34,7 +33,7 @@ func (id ServerID) String() string {
 
 type CompatibleEnvironment struct {
 	serverID ServerID
-	version  Version
+	contract paseocli.Contract
 }
 
 func (environment CompatibleEnvironment) ServerID() ServerID {
@@ -42,7 +41,7 @@ func (environment CompatibleEnvironment) ServerID() ServerID {
 }
 
 func (environment CompatibleEnvironment) Version() Version {
-	return environment.version
+	return Version{value: environment.contract.CLIVersion()}
 }
 
 type Client struct {
@@ -84,12 +83,13 @@ func (client *Client) Version(ctx context.Context) (Version, error) {
 }
 
 func (client *Client) CheckCompatibility(ctx context.Context) (CompatibleEnvironment, error) {
+	contract := paseocli.ActiveContract()
 	version, err := client.Version(ctx)
 	if err != nil {
 		return CompatibleEnvironment{}, err
 	}
-	if version.String() != compatiblePaseoVersion {
-		return CompatibleEnvironment{}, fmt.Errorf("%w: обнаружена %q, требуется %q", ErrIncompatibleCLIVersion, version, compatiblePaseoVersion)
+	if !contract.MatchesCLIVersion(version.String()) {
+		return CompatibleEnvironment{}, fmt.Errorf("%w: обнаружена %q, требуется %q", ErrIncompatibleCLIVersion, version, contract.CLIVersion())
 	}
 
 	status, err := client.Status(ctx)
@@ -111,16 +111,16 @@ func (client *Client) CheckCompatibility(ctx context.Context) (CompatibleEnviron
 	if status.daemonVersion == nil {
 		return CompatibleEnvironment{}, fmt.Errorf("%w: версия не сообщена", ErrIncompatibleDaemonVersion)
 	}
-	if status.daemonVersion.String() != compatiblePaseoVersion {
+	if !contract.MatchesDaemonVersion(status.daemonVersion.String()) {
 		return CompatibleEnvironment{}, fmt.Errorf(
 			"%w: обнаружена %q, требуется %q",
 			ErrIncompatibleDaemonVersion,
 			status.daemonVersion,
-			compatiblePaseoVersion,
+			contract.DaemonVersion(),
 		)
 	}
 
-	return CompatibleEnvironment{serverID: status.serverID, version: version}, nil
+	return CompatibleEnvironment{serverID: status.serverID, contract: contract}, nil
 }
 
 func validPaseoVersion(value string) bool {

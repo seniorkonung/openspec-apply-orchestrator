@@ -6,25 +6,21 @@ import (
 	"context"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
-func init() {
-	supplementalFullAccessMode = integrationFullAccessMode
-}
-
-func integrationFullAccessMode(key compatibilityKey) (fullAccessMode, bool) {
-	// Отдельное сопоставление существует только в сборке интеграционного стенда:
-	// производственный контракт codex/full-access остаётся закрытым и неизменным.
-	if key == (compatibilityKey{version: "0.7.2", provider: "oa-integration"}) {
-		return fullAccessMode{
-			id: "integration-unrestricted", approvalPolicy: "never", sandbox: "danger-full-access",
-		}, true
+func compatibleFullAccessMode(
+	environment CompatibleEnvironment,
+	provider string,
+) (paseocli.FullAccessMode, bool) {
+	if mode, supported := environment.contract.FullAccessMode(provider); supported {
+		return mode, true
 	}
-	return fullAccessMode{}, false
+	return paseocli.IntegrationFullAccessMode(provider)
 }
 
 // CreateOwnSessionForIntegration сохраняет узкий стенд Phase 1 на управляемом
-// ACP-провайдере, у которого Paseo 0.7.2 не публикует режимы в каталоге.
+// ACP-провайдере, у которого Paseo не публикует режимы в каталоге.
 // Производственная сборка этого обхода не содержит.
 func (gateway *ReconcileGateway) CreateOwnSessionForIntegration(
 	ctx context.Context,

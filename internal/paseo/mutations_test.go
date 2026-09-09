@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/prompts"
 )
 
@@ -201,24 +202,16 @@ func TestНепроверенныеНастройкиНеДоходятДоRun(t
 	}{
 		{name: "нулевое состояние"},
 		{
-			name: "режим по умолчанию",
+			name: "режим не подтверждён активным контрактом",
 			settings: VerifiedSessionSettings{
 				provider: "codex", model: "gpt-5.6",
-				mode: fullAccessMode{id: "default", approvalPolicy: "never", sandbox: "danger-full-access"},
-			},
-		},
-		{
-			name: "поддельная семантика полного доступа",
-			settings: VerifiedSessionSettings{
-				provider: "codex", model: "gpt-5.6",
-				mode: fullAccessMode{id: "full-access", approvalPolicy: "on-request", sandbox: "workspace-write"},
 			},
 		},
 		{
 			name: "идентификатор похож на опцию CLI",
 			settings: VerifiedSessionSettings{
 				provider: "codex", model: "--host",
-				mode: fullAccessCompatibility[compatibilityKey{version: compatiblePaseoVersion, provider: "codex"}],
+				mode: mustProductionFullAccessMode(),
 			},
 		},
 	}
@@ -394,7 +387,7 @@ func TestПотерянныйОтветArchiveРазрешаетсяПовтор
 func compatibleTestEnvironment() CompatibleEnvironment {
 	return CompatibleEnvironment{
 		serverID: ServerID{value: "server-1"},
-		version:  Version{value: compatiblePaseoVersion},
+		contract: paseocli.ActiveContract(),
 	}
 }
 
@@ -404,8 +397,16 @@ func verifiedTestSessionSettings(reasoning string, hasReasoning bool) VerifiedSe
 		model:        "gpt-5.6",
 		reasoning:    reasoning,
 		hasReasoning: hasReasoning,
-		mode:         fullAccessCompatibility[compatibilityKey{version: compatiblePaseoVersion, provider: "codex"}],
+		mode:         mustProductionFullAccessMode(),
 	}
+}
+
+func mustProductionFullAccessMode() paseocli.FullAccessMode {
+	mode, supported := paseocli.ActiveContract().FullAccessMode("codex")
+	if !supported {
+		panic("активный контракт не содержит режим codex")
+	}
+	return mode
 }
 
 func mustMutationWorkspaceID(t *testing.T, value string) orchestrator.WorkspaceID {

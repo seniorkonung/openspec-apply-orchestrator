@@ -3,6 +3,8 @@ package paseo
 import (
 	"context"
 	"fmt"
+
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
 type UntrustedSessionSettings interface {
@@ -11,48 +13,12 @@ type UntrustedSessionSettings interface {
 	Reasoning() (string, bool)
 }
 
-type fullAccessMode struct {
-	id             string
-	approvalPolicy string
-	sandbox        string
-}
-
-type compatibilityKey struct {
-	version  string
-	provider string
-}
-
-// Таблица содержит только режимы, чья unrestricted-семантика проверена для
-// точной версии встроенного провайдера. Названия режимов из provider ls не
-// являются доказательством этого контракта.
-// Источники:
-// https://github.com/getpaseo/paseo/blob/v0.7.2/packages/protocol/src/provider-manifest.ts
-// https://github.com/getpaseo/paseo/blob/v0.7.2/packages/server/src/server/agent/providers/codex-app-server-agent.ts
-var fullAccessCompatibility = map[compatibilityKey]fullAccessMode{
-	{version: "0.7.2", provider: "codex"}: {
-		id:             "full-access",
-		approvalPolicy: "never",
-		sandbox:        "danger-full-access",
-	},
-}
-
-var supplementalFullAccessMode = func(compatibilityKey) (fullAccessMode, bool) {
-	return fullAccessMode{}, false
-}
-
-func compatibleFullAccessMode(key compatibilityKey) (fullAccessMode, bool) {
-	if mode, supported := fullAccessCompatibility[key]; supported {
-		return mode, true
-	}
-	return supplementalFullAccessMode(key)
-}
-
 type VerifiedSessionSettings struct {
 	provider     string
 	model        string
 	reasoning    string
 	hasReasoning bool
-	mode         fullAccessMode
+	mode         paseocli.FullAccessMode
 }
 
 func (settings VerifiedSessionSettings) runSettings() runSessionSettings {
@@ -61,7 +27,7 @@ func (settings VerifiedSessionSettings) runSettings() runSessionSettings {
 		model:        settings.model,
 		reasoning:    settings.reasoning,
 		hasReasoning: settings.hasReasoning,
-		mode:         settings.mode.id,
+		mode:         settings.mode.ID(),
 	}
 }
 
@@ -78,7 +44,7 @@ func (settings VerifiedSessionSettings) Reasoning() (string, bool) {
 }
 
 func (settings VerifiedSessionSettings) Mode() string {
-	return settings.mode.id
+	return settings.mode.ID()
 }
 
 func validateVerifiedSessionSettings(
@@ -90,10 +56,7 @@ func validateVerifiedSessionSettings(
 		(!settings.hasReasoning && settings.reasoning != "") {
 		return ErrInvalidSessionSettings
 	}
-	expectedMode, supported := compatibleFullAccessMode(compatibilityKey{
-		version:  environment.Version().String(),
-		provider: settings.provider,
-	})
+	expectedMode, supported := compatibleFullAccessMode(environment, settings.provider)
 	if !supported || settings.mode != expectedMode {
 		return ErrInvalidSessionSettings
 	}
@@ -128,10 +91,7 @@ func (client *Client) VerifySessionSettings(
 	if !exists {
 		return VerifiedSessionSettings{}, fmt.Errorf("%w: %q", ErrProviderNotFound, provider)
 	}
-	mode, supported := compatibleFullAccessMode(compatibilityKey{
-		version:  environment.Version().String(),
-		provider: provider,
-	})
+	mode, supported := compatibleFullAccessMode(environment, provider)
 	if !supported {
 		return VerifiedSessionSettings{}, fmt.Errorf("%w: %q", ErrUnsupportedProvider, provider)
 	}

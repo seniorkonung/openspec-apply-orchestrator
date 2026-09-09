@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
 func TestNewRuntimeОднойОперациейПроверяетСредуИФормируетСсылку(t *testing.T) {
@@ -18,7 +19,7 @@ func TestNewRuntimeОднойОперациейПроверяетСредуИФ�
 	if !ok {
 		t.Fatalf("неожиданный владелец daemon: %q", owner)
 	}
-	t.Setenv("FAKE_PASEO_VERSION", compatiblePaseoVersion)
+	t.Setenv("FAKE_PASEO_VERSION", paseocli.ActiveContract().CLIVersion())
 	t.Setenv("FAKE_PASEO_STATUS", statusJSON(t, func(status map[string]any) {
 		status["owner"] = owner
 		status["hostname"] = hostname
