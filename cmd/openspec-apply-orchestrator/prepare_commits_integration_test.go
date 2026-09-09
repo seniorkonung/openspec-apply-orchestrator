@@ -34,13 +34,27 @@ func TestProductionКомандаПодготавливаетВсеВидыИз�
 	prepareProductionRepository(t, harness.Workspace())
 	binary := buildProductionCommand(t)
 
+	initialHEAD := gitOutput(t, harness.Workspace(), "rev-parse", "HEAD")
+	if status := gitOutput(t, harness.Workspace(), "status", "--porcelain=v1"); status != "" {
+		t.Fatalf("исходный Git неожиданно содержит изменения:\n%s", status)
+	}
 	clean := runProductionCommand(t, binary, harness)
 	if clean.exitCode != exitSuccess {
 		t.Fatalf("чистый репозиторий завершился с кодом %d:\n%s", clean.exitCode, clean.output)
 	}
+	if !strings.Contains(clean.output, "Поручение не требуется: незакоммиченных изменений нет.") {
+		t.Fatalf("вывод чистого запуска не сообщает об отсутствии работы:\n%s", clean.output)
+	}
+	if currentHEAD := gitOutput(t, harness.Workspace(), "rev-parse", "HEAD"); currentHEAD != initialHEAD {
+		t.Fatalf("чистый запуск изменил HEAD: было %s, стало %s", initialHEAD, currentHEAD)
+	}
+	if status := gitOutput(t, harness.Workspace(), "status", "--porcelain=v1"); status != "" {
+		t.Fatalf("чистый запуск изменил рабочее дерево:\n%s", status)
+	}
 	if prompts := harness.Prompts(t); len(prompts) != 0 {
 		t.Fatalf("для чистого Git неожиданно создан агент: %#v", prompts)
 	}
+	assertNoPaseoMutations(t, harness.RecordedCommands(t))
 	harness.ResetCommandRecording(t)
 
 	makeProductionRepositoryDirty(t, harness.Workspace())
