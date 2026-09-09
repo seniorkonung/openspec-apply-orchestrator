@@ -5,6 +5,7 @@ go = "1.27"
 "go:golang.org/x/tools/gopls" = "latest"
 lefthook = "2"
 "npm:@fission-ai/openspec" = "1.12"
+"npm:@getpaseo/cli" = "0.8.0-beta.1"
 
 [tasks]
 prepare = "lefthook install"
