@@ -95,7 +95,7 @@ func (client *Client) VerifySessionSettings(
 	if !supported {
 		return VerifiedSessionSettings{}, fmt.Errorf("%w: %q", ErrUnsupportedProvider, provider)
 	}
-	if providerEntry.status != providerAvailable || !providerEntry.enabled {
+	if !providerEntry.available {
 		return VerifiedSessionSettings{}, fmt.Errorf("%w: %q", ErrProviderUnavailable, provider)
 	}
 

@@ -26,7 +26,7 @@ func TestКаталогНастроекЧитаетсяТочнымиНемут�
 		t.Fatalf("прочитать каталог провайдеров: %v", err)
 	}
 	provider, ok := providers["codex"]
-	if !ok || provider.status != providerAvailable || !provider.enabled {
+	if !ok || !provider.available {
 		t.Fatalf("неожиданный провайдер codex: %#v", provider)
 	}
 
@@ -52,25 +52,13 @@ func TestКаталогНастроекЧитаетсяТочнымиНемут�
 	}
 }
 
-func TestКаталогНастроекСтрогоОтклоняетПовреждённыйJSON(t *testing.T) {
+func TestКаталогНастроекОтклоняетПовреждённыеЗначимыеПоля(t *testing.T) {
 	tests := []struct {
 		name      string
 		providers any
 		models    any
 		read      func(*Client) error
 	}{
-		{
-			name: "неизвестное поле провайдера",
-			providers: []any{func() map[string]any {
-				item := providerCatalogItem("codex", "available", "Enabled")
-				item["source"] = "builtin"
-				return item
-			}()},
-			read: func(client *Client) error {
-				_, err := client.readProviderCatalog(context.Background())
-				return err
-			},
-		},
 		{
 			name: "неизвестное состояние провайдера",
 			providers: []any{
@@ -115,18 +103,6 @@ func TestКаталогНастроекСтрогоОтклоняетПовре�
 			},
 		},
 		{
-			name: "несогласованное представление reasoning",
-			models: []any{func() map[string]any {
-				item := modelCatalogItem("gpt-5.6-sol", []string{"low", "high"}, "low")
-				item["thinkingOptions"] = "high, low"
-				return item
-			}()},
-			read: func(client *Client) error {
-				_, err := client.readModelCatalog(context.Background(), "codex")
-				return err
-			},
-		},
-		{
 			name: "default reasoning отсутствует в списке",
 			models: []any{
 				modelCatalogItem("gpt-5.6-sol", []string{"low"}, "high"),
@@ -152,6 +128,29 @@ func TestКаталогНастроекСтрогоОтклоняетПовре�
 				t.Fatalf("ожидалась ошибка строгой схемы, получено %v", err)
 			}
 		})
+	}
+}
+
+func TestКаталогНастроекДопускаетНовыеНеиспользуемыеПоля(t *testing.T) {
+	client := newFakeClient(t)
+	providers := []any{func() map[string]any {
+		item := providerCatalogItem("codex", "available", "Enabled")
+		item["source"] = "builtin"
+		return item
+	}()}
+	models := []any{func() map[string]any {
+		item := modelCatalogItem("gpt-5.6-sol", []string{"low", "high"}, "low")
+		item["capabilities"] = []string{"новая"}
+		return item
+	}()}
+	t.Setenv("FAKE_PASEO_PROVIDERS", encodeDirectoryJSON(t, providers))
+	t.Setenv("FAKE_PASEO_MODELS", encodeDirectoryJSON(t, models))
+
+	if _, err := client.readProviderCatalog(context.Background()); err != nil {
+		t.Fatalf("прочитать расширенный каталог провайдеров: %v", err)
+	}
+	if _, err := client.readModelCatalog(context.Background(), "codex"); err != nil {
+		t.Fatalf("прочитать расширенный каталог моделей: %v", err)
 	}
 }
 
