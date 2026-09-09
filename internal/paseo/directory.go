@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
-	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 )
 
 const managedWorkspaceNamePrefix = "oa-v1-"
@@ -69,14 +68,7 @@ func (client *Client) FindActiveWorkspace(
 		return nil, err
 	}
 
-	output, err := client.adapter.Run(ctx, paseocli.Invocation{
-		Name:      "workspace ls",
-		Arguments: []string{"workspace", "ls", "--json"},
-	})
-	if err != nil {
-		return nil, err
-	}
-	workspaces, err := decodeWorkspaceList(output)
+	workspaces, err := client.adapter.ListActiveWorkspaces(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -84,17 +76,17 @@ func (client *Client) FindActiveWorkspace(
 	expectedName := managedWorkspaceName(change)
 	matches := make([]ActiveWorkspace, 0, 1)
 	for index, workspace := range workspaces {
-		if workspace.Name.value != expectedName {
+		if workspace.Name() != expectedName {
 			continue
 		}
-		workspaceCWD, err := canonicalDirectory(workspace.CWD.value)
+		workspaceCWD, err := canonicalDirectory(workspace.CWD())
 		if err != nil {
 			return nil, fmt.Errorf("workspace %d: %w", index+1, err)
 		}
 		if workspaceCWD != canonicalCWD {
 			continue
 		}
-		id, err := orchestrator.NewWorkspaceID(workspace.WorkspaceID.value)
+		id, err := orchestrator.NewWorkspaceID(workspace.ID())
 		if err != nil {
 			return nil, fmt.Errorf("%w: workspace %d содержит некорректный ID", ErrUnexpectedJSON, index+1)
 		}
@@ -108,49 +100,6 @@ func (client *Client) FindActiveWorkspace(
 		return OneActiveWorkspace{Workspace: matches[0]}, nil
 	default:
 		return AmbiguousActiveWorkspaces{Workspaces: matches}, nil
-	}
-}
-
-type rawWorkspaceJSON struct {
-	WorkspaceID requiredValue[string] `json:"workspaceId"`
-	Project     requiredValue[string] `json:"project"`
-	Name        requiredValue[string] `json:"name"`
-	Isolation   requiredValue[string] `json:"isolation"`
-	CWD         requiredValue[string] `json:"cwd"`
-}
-
-func decodeWorkspaceList(output []byte) ([]rawWorkspaceJSON, error) {
-	var workspaces []rawWorkspaceJSON
-	if err := decodeStrictJSON(output, &workspaces); err != nil {
-		return nil, err
-	}
-	if workspaces == nil {
-		return nil, fmt.Errorf("%w: список workspace равен null", ErrUnexpectedJSON)
-	}
-	for index, workspace := range workspaces {
-		if err := validateWorkspaceJSON(workspace); err != nil {
-			return nil, fmt.Errorf("workspace %d: %w", index+1, err)
-		}
-	}
-	return workspaces, nil
-}
-
-func validateWorkspaceJSON(workspace rawWorkspaceJSON) error {
-	if !workspace.WorkspaceID.present || !workspace.Project.present || !workspace.Name.present ||
-		!workspace.Isolation.present || !workspace.CWD.present {
-		return fmt.Errorf("%w: не содержит обязательное поле", ErrUnexpectedJSON)
-	}
-	if !validIdentifierValue(workspace.WorkspaceID.value) ||
-		!validOpaqueValue(workspace.Project.value) ||
-		!validOpaqueValue(workspace.Name.value) ||
-		!filepath.IsAbs(workspace.CWD.value) {
-		return fmt.Errorf("%w: содержит некорректное поле", ErrUnexpectedJSON)
-	}
-	switch workspace.Isolation.value {
-	case "local", "worktree":
-		return nil
-	default:
-		return fmt.Errorf("%w: содержит неизвестную изоляцию", ErrUnexpectedJSON)
 	}
 }
 

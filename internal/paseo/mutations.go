@@ -297,15 +297,42 @@ func validateCompatibleEnvironment(environment CompatibleEnvironment) error {
 	return nil
 }
 
-func decodeCreatedWorkspace(output []byte) (rawWorkspaceJSON, error) {
-	var workspace rawWorkspaceJSON
+type createdWorkspaceJSON struct {
+	WorkspaceID requiredValue[string] `json:"workspaceId"`
+	Project     requiredValue[string] `json:"project"`
+	Name        requiredValue[string] `json:"name"`
+	Isolation   requiredValue[string] `json:"isolation"`
+	CWD         requiredValue[string] `json:"cwd"`
+}
+
+func decodeCreatedWorkspace(output []byte) (createdWorkspaceJSON, error) {
+	var workspace createdWorkspaceJSON
 	if err := decodeStrictJSON(output, &workspace); err != nil {
-		return rawWorkspaceJSON{}, err
+		return createdWorkspaceJSON{}, err
 	}
-	if err := validateWorkspaceJSON(workspace); err != nil {
-		return rawWorkspaceJSON{}, err
+	if err := validateCreatedWorkspaceJSON(workspace); err != nil {
+		return createdWorkspaceJSON{}, err
 	}
 	return workspace, nil
+}
+
+func validateCreatedWorkspaceJSON(workspace createdWorkspaceJSON) error {
+	if !workspace.WorkspaceID.present || !workspace.Project.present || !workspace.Name.present ||
+		!workspace.Isolation.present || !workspace.CWD.present {
+		return fmt.Errorf("%w: созданный workspace не содержит обязательное поле", ErrUnexpectedJSON)
+	}
+	if !validIdentifierValue(workspace.WorkspaceID.value) ||
+		!validOpaqueValue(workspace.Project.value) ||
+		!validOpaqueValue(workspace.Name.value) ||
+		!filepath.IsAbs(workspace.CWD.value) {
+		return fmt.Errorf("%w: созданный workspace содержит некорректное поле", ErrUnexpectedJSON)
+	}
+	switch workspace.Isolation.value {
+	case "local", "worktree":
+		return nil
+	default:
+		return fmt.Errorf("%w: созданный workspace содержит неизвестную изоляцию", ErrUnexpectedJSON)
+	}
 }
 
 type createdSessionJSON struct {

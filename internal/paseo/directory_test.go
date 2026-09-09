@@ -112,7 +112,6 @@ func TestНекорректныйJSONWorkspaceНеОзначаетОтсутст
 
 	for _, output := range []string{
 		`[{"workspaceId":"workspace-1"}]`,
-		`[{"workspaceId":"workspace-1","project":"repo","name":"name","isolation":"local","cwd":"/repo","extra":true}]`,
 		`[{"workspaceId":"workspace-1"`,
 	} {
 		client := newFakeClient(t)
@@ -122,6 +121,23 @@ func TestНекорректныйJSONWorkspaceНеОзначаетОтсутст
 		if !errors.Is(err, ErrUnexpectedJSON) && !errors.Is(err, ErrTruncatedJSON) {
 			t.Fatalf("ожидалась ошибка JSON workspace, получено %v", err)
 		}
+	}
+}
+
+func TestСписокWorkspaceДопускаетНовыеНеиспользуемыеПоля(t *testing.T) {
+	change := mustDirectoryChangeKey(t, "orchestrate-commit-preparation")
+	cwd := t.TempDir()
+	item := workspaceListItem("workspace-1", managedWorkspaceName(change), cwd)
+	item["новое"] = map[string]any{"поле": true}
+	client := newFakeClient(t)
+	t.Setenv("FAKE_PASEO_WORKSPACES", encodeDirectoryJSON(t, []map[string]any{item}))
+
+	observation, err := client.FindActiveWorkspace(context.Background(), change, cwd)
+	if err != nil {
+		t.Fatalf("найти workspace с аддитивным полем: %v", err)
+	}
+	if _, ok := observation.(OneActiveWorkspace); !ok {
+		t.Fatalf("ожидался один workspace, получено %T", observation)
 	}
 }
 
