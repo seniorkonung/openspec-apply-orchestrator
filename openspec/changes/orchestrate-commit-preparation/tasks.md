@@ -271,7 +271,7 @@
   - **Files likely touched:** `cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go`, `internal/testpaseo/daemon.go`, `internal/testpaseo/cmd/paseoproxy/main.go`.
   - **Estimated scope:** S.
 
-- [ ] 2.15 Углубить стабильный runtime Paseo за потребляющим интерфейсом команды
+- [x] 2.15 Углубить стабильный runtime Paseo за потребляющим интерфейсом команды
   - **Acceptance criteria:**
     - Production-сборка получает полностью проверенный runtime Paseo одной операцией; `cmd` больше не собирает и не хранит отдельные `Client`, `CompatibleEnvironment` и `ReconcileGateway`, а потребляющий интерфейс остаётся seam для production- и тестового адаптеров.
     - Интерфейс runtime выражает только доменные операции совместимой среды, workspace и собственных сессий; точная версия, CLI-аргументы, wire JSON и формат deep-link через него не протекают, а ссылка на известную сессию формируется модулем Paseo.
