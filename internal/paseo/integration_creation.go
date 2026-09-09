@@ -34,12 +34,16 @@ func (gateway *ReconcileGateway) CreateOwnSessionForIntegration(
 	model string,
 	prompt string,
 ) (orchestrator.SessionID, error) {
+	mode, supported := paseocli.IntegrationFullAccessMode(provider)
+	if !supported {
+		return orchestrator.SessionID{}, ErrInvalidSessionSettings
+	}
 	return gateway.createOwnSession(
 		ctx,
 		change,
 		workspaceID,
 		cwd,
-		runSessionSettings{provider: provider, model: model},
+		runSessionSettings{provider: provider, model: model, mode: mode},
 		prompt,
 	)
 }

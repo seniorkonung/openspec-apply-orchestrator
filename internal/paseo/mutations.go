@@ -4,20 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/internal/paseocli"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/prompts"
 )
-
-const maxSessionSettingLength = 256
-
-func validSessionSetting(value string) bool {
-	return len(value) <= maxSessionSettingLength && validIdentifierValue(value)
-}
 
 func (client *Client) CreateWorkspace(
 	ctx context.Context,
@@ -37,32 +29,22 @@ func (client *Client) CreateWorkspace(
 	}
 	expectedName := managedWorkspaceName(change)
 
-	output, err := client.adapter.Run(ctx, paseocli.Invocation{
-		Name: "workspace create",
-		Arguments: []string{
-			"workspace", "create",
-			"--isolation", "local",
-			"--path", canonicalCWD,
-			"--title", expectedName,
-			"--json",
-		},
+	workspace, err := client.adapter.CreateWorkspace(ctx, paseocli.WorkspaceCreation{
+		Name: expectedName,
+		CWD:  canonicalCWD,
 	})
 	if err != nil {
 		return ActiveWorkspace{}, err
 	}
 
-	workspace, err := decodeCreatedWorkspace(output)
+	actualCWD, err := canonicalDirectory(workspace.CWD())
 	if err != nil {
 		return ActiveWorkspace{}, err
 	}
-	actualCWD, err := canonicalDirectory(workspace.CWD.value)
-	if err != nil {
-		return ActiveWorkspace{}, err
-	}
-	if workspace.Name.value != expectedName || workspace.Isolation.value != "local" || actualCWD != canonicalCWD {
+	if workspace.Name() != expectedName || actualCWD != canonicalCWD {
 		return ActiveWorkspace{}, fmt.Errorf("%w: созданный workspace не соответствует запросу", ErrUnexpectedJSON)
 	}
-	id, err := orchestrator.NewWorkspaceID(workspace.WorkspaceID.value)
+	id, err := orchestrator.NewWorkspaceID(workspace.ID())
 	if err != nil {
 		return ActiveWorkspace{}, fmt.Errorf("%w: созданный workspace содержит некорректный ID", ErrUnexpectedJSON)
 	}
@@ -98,7 +80,7 @@ type runSessionSettings struct {
 	model        string
 	reasoning    string
 	hasReasoning bool
-	mode         string
+	mode         paseocli.FullAccessMode
 }
 
 func (client *Client) createOwnSession(
@@ -119,7 +101,7 @@ func (client *Client) createOwnSession(
 	if !validCatalogIdentifier(settings.provider) || !validCatalogIdentifier(settings.model) ||
 		(settings.hasReasoning && !validCatalogIdentifier(settings.reasoning)) ||
 		(!settings.hasReasoning && settings.reasoning != "") ||
-		(settings.mode != "" && !validCatalogIdentifier(settings.mode)) {
+		!validCatalogIdentifier(settings.mode.ID()) {
 		return orchestrator.SessionID{}, ErrInvalidSessionSettings
 	}
 	if strings.TrimSpace(prompt) == "" || strings.IndexByte(prompt, 0) >= 0 {
@@ -133,45 +115,31 @@ func (client *Client) createOwnSession(
 		return orchestrator.SessionID{}, ErrInvalidWorkingDirectory
 	}
 
-	args := []string{
-		"run", "--background",
-		"--workspace", workspace.id.String(),
-		"--provider", settings.provider,
-		"--model", settings.model,
-	}
-	if settings.hasReasoning {
-		args = append(args, "--thinking", settings.reasoning)
-	}
-	if settings.mode != "" {
-		args = append(args, "--mode", settings.mode)
-	}
+	labels := make([]paseocli.SessionLabel, 0, 5)
 	for _, label := range ownSessionLabels(change, workspace.id) {
-		args = append(args, "--label", label.key+"="+label.value)
+		labels = append(labels, paseocli.SessionLabel{Key: label.key, Value: label.value})
 	}
-	args = append(args, "--json", "--", prompt)
-
-	output, err := client.adapter.Run(ctx, paseocli.Invocation{
-		Name:      "run",
-		Arguments: args,
-		// Paseo 0.7.2 выводит родителя из PASEO_AGENT_ID даже при явном --workspace.
-		// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/agent/run.ts
-		UnsetEnvironment: []string{"PASEO_AGENT_ID", "PASEO_WORKSPACE_ID"},
+	result, err := client.adapter.CreateSession(ctx, paseocli.SessionCreation{
+		WorkspaceID:  workspace.id.String(),
+		Provider:     settings.provider,
+		Model:        settings.model,
+		Reasoning:    settings.reasoning,
+		HasReasoning: settings.hasReasoning,
+		Mode:         settings.mode,
+		Labels:       labels,
+		Prompt:       prompt,
 	})
 	if err != nil {
 		return orchestrator.SessionID{}, unknownRunOutcome(err)
 	}
-	result, err := decodeCreatedSession(output)
-	if err != nil {
-		return orchestrator.SessionID{}, unknownRunOutcome(err)
-	}
-	actualCWD, err := canonicalDirectory(result.CWD.value)
+	actualCWD, err := canonicalDirectory(result.CWD())
 	if err != nil {
 		return orchestrator.SessionID{}, unknownRunOutcome(err)
 	}
 	if actualCWD != workspace.cwd {
 		return orchestrator.SessionID{}, unknownRunOutcome(ErrSessionWorkingDirectoryMismatch)
 	}
-	id, err := orchestrator.NewSessionID(result.AgentID.value)
+	id, err := orchestrator.NewSessionID(result.ID())
 	if err != nil {
 		return orchestrator.SessionID{}, unknownRunOutcome(
 			fmt.Errorf("%w: созданная сессия содержит некорректный ID", ErrUnexpectedJSON),
@@ -209,18 +177,7 @@ func (client *Client) ArchiveOwnSession(
 		return ErrSessionStillRunning
 	}
 
-	output, mutationErr := client.adapter.Run(ctx, paseocli.Invocation{
-		Name:      "archive",
-		Arguments: []string{"archive", session.ID().String(), "--json"},
-	})
-	if mutationErr == nil {
-		result, err := decodeArchivedSession(output)
-		if err != nil {
-			mutationErr = err
-		} else if result.AgentID.value != session.ID().String() {
-			mutationErr = ErrSessionIdentityMismatch
-		}
-	}
+	mutationErr := client.adapter.ArchiveSession(ctx, session.ID().String())
 
 	after, inspectionErr := client.inspectManagedSession(ctx, workspace, session)
 	inspectionErr = orchestrator.ClassifySourceReadError(
@@ -296,96 +253,4 @@ func validateCompatibleEnvironment(environment CompatibleEnvironment) error {
 		return ErrIncompatibleCLIVersion
 	}
 	return nil
-}
-
-type createdWorkspaceJSON struct {
-	WorkspaceID requiredValue[string] `json:"workspaceId"`
-	Project     requiredValue[string] `json:"project"`
-	Name        requiredValue[string] `json:"name"`
-	Isolation   requiredValue[string] `json:"isolation"`
-	CWD         requiredValue[string] `json:"cwd"`
-}
-
-func decodeCreatedWorkspace(output []byte) (createdWorkspaceJSON, error) {
-	var workspace createdWorkspaceJSON
-	if err := decodeStrictJSON(output, &workspace); err != nil {
-		return createdWorkspaceJSON{}, err
-	}
-	if err := validateCreatedWorkspaceJSON(workspace); err != nil {
-		return createdWorkspaceJSON{}, err
-	}
-	return workspace, nil
-}
-
-func validateCreatedWorkspaceJSON(workspace createdWorkspaceJSON) error {
-	if !workspace.WorkspaceID.present || !workspace.Project.present || !workspace.Name.present ||
-		!workspace.Isolation.present || !workspace.CWD.present {
-		return fmt.Errorf("%w: созданный workspace не содержит обязательное поле", ErrUnexpectedJSON)
-	}
-	if !validIdentifierValue(workspace.WorkspaceID.value) ||
-		!validOpaqueValue(workspace.Project.value) ||
-		!validOpaqueValue(workspace.Name.value) ||
-		!filepath.IsAbs(workspace.CWD.value) {
-		return fmt.Errorf("%w: созданный workspace содержит некорректное поле", ErrUnexpectedJSON)
-	}
-	switch workspace.Isolation.value {
-	case "local", "worktree":
-		return nil
-	default:
-		return fmt.Errorf("%w: созданный workspace содержит неизвестную изоляцию", ErrUnexpectedJSON)
-	}
-}
-
-type createdSessionJSON struct {
-	AgentID  requiredValue[string] `json:"agentId"`
-	Status   requiredValue[string] `json:"status"`
-	Provider requiredValue[string] `json:"provider"`
-	CWD      requiredValue[string] `json:"cwd"`
-	Title    requiredValue[string] `json:"title"`
-}
-
-// Схема соответствует JSON команды archive Paseo CLI 0.7.2.
-// Источник: https://github.com/getpaseo/paseo/blob/v0.7.2/packages/cli/src/commands/agent/archive.ts
-type archivedSessionJSON struct {
-	AgentID    requiredValue[string] `json:"agentId"`
-	Status     requiredValue[string] `json:"status"`
-	ArchivedAt requiredValue[string] `json:"archivedAt"`
-}
-
-func decodeArchivedSession(output []byte) (archivedSessionJSON, error) {
-	var session archivedSessionJSON
-	if err := decodeStrictJSON(output, &session); err != nil {
-		return archivedSessionJSON{}, err
-	}
-	if !session.AgentID.present || !session.Status.present || !session.ArchivedAt.present {
-		return archivedSessionJSON{}, fmt.Errorf("%w: archive не содержит обязательное поле", ErrUnexpectedJSON)
-	}
-	if !validIdentifierValue(session.AgentID.value) || session.Status.value != "archived" {
-		return archivedSessionJSON{}, fmt.Errorf("%w: archive содержит некорректное поле", ErrUnexpectedJSON)
-	}
-	if _, err := time.Parse(time.RFC3339Nano, session.ArchivedAt.value); err != nil {
-		return archivedSessionJSON{}, fmt.Errorf("%w: archive содержит некорректное время", ErrUnexpectedJSON)
-	}
-	return session, nil
-}
-
-func decodeCreatedSession(output []byte) (createdSessionJSON, error) {
-	var session createdSessionJSON
-	if err := decodeStrictJSON(output, &session); err != nil {
-		return createdSessionJSON{}, err
-	}
-	if !session.AgentID.present || !session.Status.present || !session.Provider.present ||
-		!session.CWD.present || !session.Title.present {
-		return createdSessionJSON{}, fmt.Errorf("%w: run не содержит обязательное поле", ErrUnexpectedJSON)
-	}
-	if !validIdentifierValue(session.AgentID.value) || !validOpaqueValue(session.Provider.value) ||
-		!filepath.IsAbs(session.CWD.value) || !validOpaqueValue(session.Title.value) {
-		return createdSessionJSON{}, fmt.Errorf("%w: run содержит некорректное поле", ErrUnexpectedJSON)
-	}
-	switch session.Status.value {
-	case "created", "running":
-		return session, nil
-	default:
-		return createdSessionJSON{}, fmt.Errorf("%w: run содержит неизвестное состояние", ErrUnexpectedJSON)
-	}
 }

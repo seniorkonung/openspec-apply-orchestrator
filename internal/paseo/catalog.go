@@ -3,7 +3,10 @@ package paseo
 import (
 	"context"
 	"strings"
+	"unicode"
 )
+
+const maxSessionSettingLength = 256
 
 type providerCatalogEntry struct {
 	available bool
@@ -45,4 +48,10 @@ func (client *Client) readModelCatalog(
 
 func validCatalogIdentifier(value string) bool {
 	return validSessionSetting(value) && !strings.HasPrefix(value, "-")
+}
+
+func validSessionSetting(value string) bool {
+	return value != "" && len(value) <= maxSessionSettingLength &&
+		strings.TrimSpace(value) == value && strings.IndexFunc(value, unicode.IsSpace) < 0 &&
+		strings.IndexFunc(value, unicode.IsControl) < 0
 }

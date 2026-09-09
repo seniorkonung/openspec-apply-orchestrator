@@ -27,7 +27,7 @@ func (settings VerifiedSessionSettings) runSettings() runSessionSettings {
 		model:        settings.model,
 		reasoning:    settings.reasoning,
 		hasReasoning: settings.hasReasoning,
-		mode:         settings.mode.ID(),
+		mode:         settings.mode,
 	}
 }
 

@@ -31,6 +31,10 @@ func TestРеальныйPaseoСохраняетВидимуюСессиюПос
 	if environment.ServerID().String() == "" {
 		t.Fatalf("совместимая среда не содержит serverId")
 	}
+	mode, supported := compatibleFullAccessMode(environment, testpaseo.ProviderID)
+	if !supported {
+		t.Fatalf("тестовый провайдер не содержит проверенный режим полного доступа")
+	}
 
 	change, err := orchestrator.NewChangeKey("integration-recovery")
 	if err != nil {
@@ -45,7 +49,11 @@ func TestРеальныйPaseoСохраняетВидимуюСессиюПос
 		environment,
 		change,
 		workspace,
-		runSessionSettings{provider: testpaseo.ProviderID, model: testpaseo.ModelID},
+		runSessionSettings{
+			provider: testpaseo.ProviderID,
+			model:    testpaseo.ModelID,
+			mode:     mode,
+		},
 		integrationPrompt,
 	)
 	if err != nil {
