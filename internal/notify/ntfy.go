@@ -78,7 +78,7 @@ func (deliverer *ntfyDeliverer) Deliver(ctx context.Context, event Intervention)
 	if deliverer.hasToken {
 		var present bool
 		token, present = deliverer.lookupEnvironment(deliverer.tokenEnvironment)
-		if !present || token == "" {
+		if !present || strings.TrimSpace(token) == "" {
 			return NewDeliveryError()
 		}
 	}

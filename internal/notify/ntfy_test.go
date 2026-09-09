@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/config"
 )
@@ -89,8 +91,10 @@ func TestNtfyДоставляетСсылкуСАвторизациейТоль�
 
 func TestNtfyИспользуетСохранённуюПаруКаналаПослеИзмененияФайла(t *testing.T) {
 	var originalRequests atomic.Int32
-	original := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	originalAuthorization := make(chan string, 1)
+	original := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		originalRequests.Add(1)
+		originalAuthorization <- request.Header.Get("Authorization")
 		writer.WriteHeader(http.StatusOK)
 	}))
 	defer original.Close()
@@ -127,14 +131,59 @@ func TestNtfyИспользуетСохранённуюПаруКаналаПо�
 	if changedRequests.Load() != 0 {
 		t.Fatalf("изменённый адрес получил %d запросов", changedRequests.Load())
 	}
+	if authorization := <-originalAuthorization; authorization != "Bearer original-token" {
+		t.Fatalf("снимок подменил переменную токена: %q", authorization)
+	}
+}
+
+func TestNtfyЧитаетЗначениеТокенаНепосредственноПередКаждойОтправкой(t *testing.T) {
+	const tokenEnvironment = "ROTATED_NTFY_TOKEN"
+	authorizations := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		authorizations <- request.Header.Get("Authorization")
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	t.Setenv(tokenEnvironment, "token-before-construction")
+	deliverer, err := NewNtfy(readNtfyChannel(t, server.URL+"/topic", tokenEnvironment))
+	if err != nil {
+		t.Fatalf("создать адаптер ntfy: %v", err)
+	}
+	event := testNtfyIntervention(t)
+
+	t.Setenv(tokenEnvironment, "token-before-first-delivery")
+	if deliveryErr := deliverer.Deliver(context.Background(), event); deliveryErr != nil {
+		t.Fatalf("выполнить первую доставку: %v", deliveryErr)
+	}
+	t.Setenv(tokenEnvironment, "token-before-second-delivery")
+	if deliveryErr := deliverer.Deliver(context.Background(), event); deliveryErr != nil {
+		t.Fatalf("выполнить вторую доставку: %v", deliveryErr)
+	}
+
+	if authorization := <-authorizations; authorization != "Bearer token-before-first-delivery" {
+		t.Fatalf("первая доставка использовала несвежее значение токена: %q", authorization)
+	}
+	if authorization := <-authorizations; authorization != "Bearer token-before-second-delivery" {
+		t.Fatalf("вторая доставка использовала несвежее значение токена: %q", authorization)
+	}
 }
 
 func TestNtfyНеОбращаетсяКСетиБезНепустогоТокена(t *testing.T) {
-	for _, token := range []string{"", "отсутствует"} {
-		t.Run(fmt.Sprintf("значение_%q", token), func(t *testing.T) {
+	tests := []struct {
+		name    string
+		present bool
+		value   string
+	}{
+		{name: "переменная отсутствует"},
+		{name: "переменная пуста", present: true},
+		{name: "переменная содержит только пробелы", present: true, value: " \t "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			const tokenEnvironment = "MISSING_NTFY_TOKEN"
-			if token == "" {
-				t.Setenv(tokenEnvironment, "")
+			if tt.present {
+				t.Setenv(tokenEnvironment, tt.value)
 			} else {
 				_ = os.Unsetenv(tokenEnvironment)
 			}
@@ -159,6 +208,245 @@ func TestNtfyНеОбращаетсяКСетиБезНепустогоТоке�
 			}
 		})
 	}
+}
+
+func TestNtfyНеСледуетПеренаправлениямСТокеномИБезНего(t *testing.T) {
+	redirects := []struct {
+		name string
+		kind redirectKind
+	}{
+		{name: "same-origin", kind: redirectSameOrigin},
+		{name: "cross-origin", kind: redirectCrossOrigin},
+		{name: "HTTPS в HTTP", kind: redirectHTTPSDowngrade},
+	}
+	for _, redirect := range redirects {
+		for _, authorized := range []bool{false, true} {
+			name := redirect.name + "/без токена"
+			if authorized {
+				name = redirect.name + "/с токеном"
+			}
+			t.Run(name, func(t *testing.T) {
+				testNtfyRedirect(t, redirect.kind, authorized)
+			})
+		}
+	}
+}
+
+func TestNtfyОграничиваетВремяЗапросаИУчитываетОтмену(t *testing.T) {
+	tests := []struct {
+		name    string
+		context func() (context.Context, context.CancelFunc)
+		timeout time.Duration
+	}{
+		{
+			name: "внутренний тайм-аут",
+			context: func() (context.Context, context.CancelFunc) {
+				return context.WithCancel(context.Background())
+			},
+			timeout: 20 * time.Millisecond,
+		},
+		{
+			name: "отмена вызывающего кода",
+			context: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx, func() {}
+			},
+			timeout: time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requestFinished := make(chan error, 1)
+			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				<-request.Context().Done()
+				requestFinished <- request.Context().Err()
+				return nil, request.Context().Err()
+			})
+			deliverer := newTestNtfy(t, "http://127.0.0.1/topic", "", ntfyDependencies{
+				transport:         transport,
+				lookupEnvironment: os.LookupEnv,
+				timeout:           tt.timeout,
+				maximumResponse:   maximumNtfyResponseBytes,
+			})
+			ctx, cancel := tt.context()
+			defer cancel()
+
+			started := time.Now()
+			if deliveryErr := deliverer.Deliver(ctx, testNtfyIntervention(t)); deliveryErr == nil {
+				t.Fatal("прерванный запрос не должен подтверждать доставку")
+			}
+			if time.Since(started) > time.Second {
+				t.Fatal("прерванный запрос не завершился в ограниченное время")
+			}
+			select {
+			case observed := <-requestFinished:
+				if !errors.Is(observed, context.Canceled) && !errors.Is(observed, context.DeadlineExceeded) {
+					t.Fatalf("transport получил неожиданную причину завершения: %v", observed)
+				}
+			default:
+				// Отменённый до отправки запрос может не достигнуть RoundTripper.
+			}
+		})
+	}
+}
+
+func TestNtfyОграничиваетОтветИПодтверждаетТолькоУспешныйСтатус(t *testing.T) {
+	t.Run("ответ превышает предел", func(t *testing.T) {
+		reader := &countingReader{reader: strings.NewReader(strings.Repeat("x", 128))}
+		deliverer := newTestNtfy(t, "http://127.0.0.1/topic", "", ntfyDependencies{
+			transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(reader),
+					Header:     make(http.Header),
+				}, nil
+			}),
+			lookupEnvironment: os.LookupEnv,
+			timeout:           time.Second,
+			maximumResponse:   16,
+		})
+
+		if deliveryErr := deliverer.Deliver(context.Background(), testNtfyIntervention(t)); deliveryErr == nil {
+			t.Fatal("слишком большой ответ не должен подтверждать доставку")
+		}
+		if reader.read > 17 {
+			t.Fatalf("адаптер прочитал %d байт при пределе 16", reader.read)
+		}
+	})
+
+	t.Run("неуспешный ответ не раскрывает внешние данные", func(t *testing.T) {
+		const privateResponse = "private response with token secret-token-value"
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = writer.Write([]byte(privateResponse))
+		}))
+		defer server.Close()
+		deliverer, err := NewNtfy(readNtfyChannel(t, server.URL+"/private-topic", ""))
+		if err != nil {
+			t.Fatalf("создать адаптер ntfy: %v", err)
+		}
+		event := testNtfyIntervention(t)
+
+		deliveryErr := deliverer.Deliver(context.Background(), event)
+		if deliveryErr == nil {
+			t.Fatal("неуспешный HTTP-статус не должен подтверждать доставку")
+		}
+		for _, private := range []string{privateResponse, server.URL, event.Message(), event.SessionLink().String()} {
+			if strings.Contains(deliveryErr.Error(), private) {
+				t.Fatalf("ошибка доставки раскрыла внешние данные %q: %q", private, deliveryErr.Error())
+			}
+		}
+	})
+}
+
+type redirectKind uint8
+
+const (
+	redirectSameOrigin redirectKind = iota + 1
+	redirectCrossOrigin
+	redirectHTTPSDowngrade
+)
+
+func testNtfyRedirect(t *testing.T, kind redirectKind, authorized bool) {
+	t.Helper()
+	var sourceRequests atomic.Int32
+	var redirectedRequests atomic.Int32
+
+	var destination *httptest.Server
+	if kind == redirectCrossOrigin || kind == redirectHTTPSDowngrade {
+		destination = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			redirectedRequests.Add(1)
+			writer.WriteHeader(http.StatusOK)
+		}))
+		defer destination.Close()
+	}
+
+	var source *httptest.Server
+	handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/redirected" {
+			redirectedRequests.Add(1)
+			writer.WriteHeader(http.StatusOK)
+			return
+		}
+		sourceRequests.Add(1)
+		location := source.URL + "/redirected"
+		if destination != nil {
+			location = destination.URL + "/redirected"
+		}
+		http.Redirect(writer, request, location, http.StatusTemporaryRedirect)
+	})
+	if kind == redirectHTTPSDowngrade {
+		source = httptest.NewTLSServer(handler)
+	} else {
+		source = httptest.NewServer(handler)
+	}
+	defer source.Close()
+
+	tokenEnvironment := ""
+	if authorized {
+		tokenEnvironment = "REDIRECT_NTFY_TOKEN"
+		t.Setenv(tokenEnvironment, "redirect-secret-token")
+	}
+	transport := http.DefaultTransport
+	if kind == redirectHTTPSDowngrade {
+		transport = source.Client().Transport
+	}
+	deliverer := newTestNtfy(t, source.URL+"/topic", tokenEnvironment, ntfyDependencies{
+		transport:         transport,
+		lookupEnvironment: os.LookupEnv,
+		timeout:           time.Second,
+		maximumResponse:   maximumNtfyResponseBytes,
+	})
+
+	deliveryErr := deliverer.Deliver(context.Background(), testNtfyIntervention(t))
+	if deliveryErr == nil {
+		t.Fatal("перенаправление не должно подтверждать доставку")
+	}
+	if sourceRequests.Load() != 1 {
+		t.Fatalf("исходный сервер получил %d запросов, ожидался один", sourceRequests.Load())
+	}
+	if redirectedRequests.Load() != 0 {
+		t.Fatalf("адрес из Location получил %d запросов", redirectedRequests.Load())
+	}
+	for _, private := range []string{source.URL, "redirect-secret-token"} {
+		if strings.Contains(deliveryErr.Error(), private) {
+			t.Fatalf("ошибка редиректа раскрыла %q: %q", private, deliveryErr.Error())
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
+
+type countingReader struct {
+	reader io.Reader
+	read   int
+}
+
+func (reader *countingReader) Read(buffer []byte) (int, error) {
+	read, err := reader.reader.Read(buffer)
+	reader.read += read
+	return read, err
+}
+
+func newTestNtfy(
+	t *testing.T,
+	address string,
+	tokenEnvironment string,
+	dependencies ntfyDependencies,
+) *ntfyDeliverer {
+	t.Helper()
+	channel := readNtfyChannel(t, address, tokenEnvironment)
+	deliverer, err := newNtfy(channel, dependencies)
+	if err != nil {
+		t.Fatalf("создать тестовый адаптер ntfy: %v", err)
+	}
+	return deliverer
 }
 
 type capturedNtfyRequest struct {
