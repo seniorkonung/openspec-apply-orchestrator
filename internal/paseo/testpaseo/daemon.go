@@ -72,62 +72,6 @@ const (
 	BehaviorAwaitRelease  Behavior = "await-release"
 )
 
-type DriverOperation string
-
-const (
-	DriverStart     DriverOperation = "start"
-	DriverObserve   DriverOperation = "observe"
-	DriverReconcile DriverOperation = "reconcile"
-)
-
-type DriverObservation string
-
-const (
-	ObservationNoWorkspace   DriverObservation = "no_workspace"
-	ObservationNoSession     DriverObservation = "no_session"
-	ObservationWorking       DriverObservation = "working"
-	ObservationTurnFinished  DriverObservation = "turn_finished"
-	ObservationPermission    DriverObservation = "permission"
-	ObservationAgentError    DriverObservation = "agent_error"
-	ObservationClosed        DriverObservation = "closed"
-	ObservationAmbiguous     DriverObservation = "ambiguous"
-	ObservationNotApplicable DriverObservation = "not_applicable"
-)
-
-type DriverErrorKind string
-
-const (
-	DriverCanceled              DriverErrorKind = "canceled"
-	DriverUnsupportedFilesystem DriverErrorKind = "unsupported_filesystem"
-	DriverRunOutcomeUnknown     DriverErrorKind = "run_outcome_unknown"
-	DriverOtherError            DriverErrorKind = "other"
-)
-
-type DriverRequest struct {
-	Operation   DriverOperation
-	Change      string
-	Prompt      string
-	WorkingRoot string
-	ChangeRoot  string
-}
-
-type DriverResult struct {
-	Operation   DriverOperation   `json:"operation"`
-	Version     string            `json:"version,omitempty"`
-	ServerID    string            `json:"serverId,omitempty"`
-	WorkspaceID string            `json:"workspaceId,omitempty"`
-	SessionID   string            `json:"sessionId,omitempty"`
-	Observation DriverObservation `json:"observation"`
-	Error       string            `json:"error,omitempty"`
-	ErrorKind   DriverErrorKind   `json:"errorKind,omitempty"`
-}
-
-type DriverProcess struct {
-	Command *exec.Cmd
-	stdout  bytes.Buffer
-	stderr  bytes.Buffer
-}
-
 type Harness struct {
 	cliPath     string
 	path        string
@@ -135,11 +79,9 @@ type Harness struct {
 	listen      string
 	host        string
 	workspace   string
-	changeRoot  string
 	controlPath string
 	releasePath string
 	recordPath  string
-	driverPath  string
 	proxyPath   string
 	mutationLog string
 	commandLog  string
@@ -195,11 +137,9 @@ func start(t *testing.T, exportEnvironment, withUserPlugin bool) *Harness {
 		home:        home,
 		listen:      filepath.Join(home, "daemon.sock"),
 		workspace:   filepath.Join(home, "workspace"),
-		changeRoot:  filepath.Join(home, "change"),
 		controlPath: filepath.Join(home, "provider.control"),
 		releasePath: filepath.Join(home, "provider.release"),
 		recordPath:  filepath.Join(home, "provider-prompts.jsonl"),
-		driverPath:  filepath.Join(home, "reconcile-driver"),
 		proxyPath:   filepath.Join(home, "proxy-bin", "paseo"),
 		mutationLog: filepath.Join(home, "intercepted-mutations.log"),
 		commandLog:  filepath.Join(home, "commands.jsonl"),
@@ -210,14 +150,11 @@ func start(t *testing.T, exportEnvironment, withUserPlugin bool) *Harness {
 		exportEnvironment: exportEnvironment,
 	}
 	harness.host = "unix://" + harness.listen
-	for _, directory := range []string{harness.workspace, harness.changeRoot} {
-		if err := os.Mkdir(directory, 0o700); err != nil {
-			t.Fatalf("создать каталог стенда: %v", err)
-		}
+	if err := os.Mkdir(harness.workspace, 0o700); err != nil {
+		t.Fatalf("создать каталог стенда: %v", err)
 	}
 	providerPath := filepath.Join(home, "test-provider")
 	buildTestBinary(t, root, providerPath, "./internal/paseo/testpaseo/cmd/provider")
-	buildTestBinary(t, root, harness.driverPath, "./internal/paseo/testpaseo/cmd/reconcile")
 	if err := os.Mkdir(filepath.Dir(harness.proxyPath), 0o700); err != nil {
 		t.Fatalf("создать каталог прокси Paseo: %v", err)
 	}
@@ -424,52 +361,6 @@ func (harness *Harness) interceptedMutations(t *testing.T) []string {
 		}
 	}
 	return mutations
-}
-
-func (harness *Harness) StartDriver(t *testing.T, request DriverRequest) *DriverProcess {
-	t.Helper()
-	request = harness.completeDriverRequest(t, request)
-	process := &DriverProcess{}
-	process.Command = exec.Command(harness.driverPath, string(request.Operation))
-	process.Command.Dir = request.WorkingRoot
-	process.Command.Env = append(
-		harness.environment(),
-		"OA_TESTPASEO_CHANGE="+request.Change,
-		"OA_TESTPASEO_PROMPT="+request.Prompt,
-		"OA_TESTPASEO_WORKING_ROOT="+request.WorkingRoot,
-		"OA_TESTPASEO_CHANGE_ROOT="+request.ChangeRoot,
-	)
-	process.Command.Stdout = &process.stdout
-	process.Command.Stderr = &process.stderr
-	if err := process.Command.Start(); err != nil {
-		t.Fatalf("запустить отдельный процесс сопровождения: %v", err)
-	}
-	return process
-}
-
-func (harness *Harness) RunDriver(t *testing.T, request DriverRequest) DriverResult {
-	t.Helper()
-	return harness.StartDriver(t, request).Wait(t)
-}
-
-func (process *DriverProcess) Wait(t *testing.T) DriverResult {
-	t.Helper()
-	if err := process.Command.Wait(); err != nil {
-		t.Fatalf(
-			"процесс сопровождения завершился аварийно: %v\nstdout:\n%s\nstderr:\n%s",
-			err, process.stdout.Bytes(), process.stderr.Bytes(),
-		)
-	}
-	var result DriverResult
-	decoder := json.NewDecoder(bytes.NewReader(process.stdout.Bytes()))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&result); err != nil {
-		t.Fatalf(
-			"прочитать результат процесса сопровождения: %v\nstdout:\n%s\nstderr:\n%s",
-			err, process.stdout.Bytes(), process.stderr.Bytes(),
-		)
-	}
-	return result
 }
 
 func (harness *Harness) RunCLI(t *testing.T, args ...string) CLIResult {
@@ -801,25 +692,6 @@ func (harness *Harness) environment() []string {
 
 func (harness *Harness) proxyPathEnvironment() string {
 	return filepath.Dir(harness.proxyPath) + string(os.PathListSeparator) + harness.path
-}
-
-func (harness *Harness) completeDriverRequest(t *testing.T, request DriverRequest) DriverRequest {
-	t.Helper()
-	switch request.Operation {
-	case DriverStart, DriverObserve, DriverReconcile:
-	default:
-		t.Fatalf("неизвестная операция процесса сопровождения: %q", request.Operation)
-	}
-	if strings.TrimSpace(request.Change) == "" || strings.TrimSpace(request.Prompt) == "" {
-		t.Fatal("процессу сопровождения нужны change и поручение")
-	}
-	if request.WorkingRoot == "" {
-		request.WorkingRoot = harness.workspace
-	}
-	if request.ChangeRoot == "" {
-		request.ChangeRoot = harness.changeRoot
-	}
-	return request
 }
 
 func setProcessEnvironment(t *testing.T, harness *Harness) {

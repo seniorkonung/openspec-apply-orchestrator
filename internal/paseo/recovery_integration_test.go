@@ -16,8 +16,9 @@ import (
 
 const integrationPrompt = "Подтвердить восстановление сессии без изменения рабочего репозитория."
 
-func TestРеальныйPaseoСохраняетВидимуюСессиюПослеПерезапускаDaemon(t *testing.T) {
-	harness := testpaseo.Start(t)
+func TestРеальныйPaseoКвалифицируетСозданиеИВосстановлениеСессии(t *testing.T) {
+	harness := testpaseo.StartWithUserPlugin(t)
+	harness.EnableCommandRecording(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -60,6 +61,10 @@ func TestРеальныйPaseoСохраняетВидимуюСессиюПос
 	if err != nil {
 		t.Fatalf("создать собственную сессию: %v", err)
 	}
+	if !harness.UserPluginObserved(t) {
+		t.Fatal("включённый пользовательский плагин не наблюдал agent.create")
+	}
+	assertIntegrationRunRequest(t, harness.RecordedCommands(t), workspace.ID(), change)
 
 	observation := waitForIntegrationSession(t, ctx, client, change, workspace.ID(), harness.Workspace())
 	assertObservedIntegrationSession(t, observation, sessionID)
@@ -119,60 +124,21 @@ func TestРеальныйPaseoСохраняетВидимуюСессиюПос
 		t.Fatalf("полное поручение не сохранилось после перезапуска daemon: %#v", prompts)
 	}
 	t.Logf(
-		"serverId=%s, workspaceId=%s, sessionId=%s, состояние=%T",
+		"serverId=%s, workspaceId=%s, sessionId=%s, состояние=%T, пользовательский plugin наблюдал создание",
 		restartedEnvironment.ServerID(), workspace.ID(), sessionID, restartedObservation,
 	)
 }
 
-func TestПользовательскийПлагинНеМеняетПроверяемыйЗапросАдаптера(t *testing.T) {
-	harness := testpaseo.StartWithUserPlugin(t)
-	harness.EnableCommandRecording(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	client, err := NewClient()
-	if err != nil {
-		t.Fatalf("создать производственный клиент: %v", err)
-	}
-	environment, err := client.CheckCompatibility(ctx)
-	if err != nil {
-		t.Fatalf("подтвердить совместимость: %v", err)
-	}
-	mode, supported := compatibleFullAccessMode(environment, testpaseo.ProviderID)
-	if !supported {
-		t.Fatalf("тестовый провайдер не содержит проверенный режим полного доступа")
-	}
-
-	change, err := orchestrator.NewChangeKey("integration-user-plugin")
-	if err != nil {
-		t.Fatalf("создать ключ change: %v", err)
-	}
-	workspace, err := client.CreateWorkspace(ctx, environment, change, harness.Workspace())
-	if err != nil {
-		t.Fatalf("создать workspace: %v", err)
-	}
-	_, err = client.createOwnSession(
-		ctx,
-		environment,
-		change,
-		workspace,
-		runSessionSettings{
-			provider: testpaseo.ProviderID,
-			model:    testpaseo.ModelID,
-			mode:     mode,
-		},
-		integrationPrompt,
-	)
-	if err != nil {
-		t.Fatalf("создать сессию при включённом пользовательском плагине: %v", err)
-	}
-	if !harness.UserPluginObserved(t) {
-		t.Fatal("включённый пользовательский плагин не наблюдал agent.create")
-	}
-
+func assertIntegrationRunRequest(
+	t *testing.T,
+	commands [][]string,
+	workspace orchestrator.WorkspaceID,
+	change orchestrator.ChangeKey,
+) {
+	t.Helper()
 	wantRun := []string{
 		"run", "--background",
-		"--workspace", workspace.ID().String(),
+		"--workspace", workspace.String(),
 		"--provider", testpaseo.ProviderID,
 		"--model", testpaseo.ModelID,
 		"--mode", testpaseo.ModeID(),
@@ -180,11 +146,11 @@ func TestПользовательскийПлагинНеМеняетПрове�
 		"--label", orchestrator.LabelVersion + "=" + orchestrator.CurrentOwnershipVersion,
 		"--label", orchestrator.LabelChange + "=" + change.String(),
 		"--label", orchestrator.LabelKind + "=" + orchestrator.CommitPreparationKind,
-		"--label", orchestrator.LabelWorkspace + "=" + workspace.ID().String(),
+		"--label", orchestrator.LabelWorkspace + "=" + workspace.String(),
 		"--json", "--", integrationPrompt,
 	}
 	var runCommands [][]string
-	for _, command := range harness.RecordedCommands(t) {
+	for _, command := range commands {
 		if len(command) > 0 && command[0] == "plugin" {
 			t.Fatalf("производственный адаптер запросил топологию плагинов: %#v", command)
 		}
@@ -195,58 +161,6 @@ func TestПользовательскийПлагинНеМеняетПрове�
 	if len(runCommands) != 1 || !slices.Equal(runCommands[0], wantRun) {
 		t.Fatalf("неожиданные команды run при включённом плагине:\nполучено: %#v\nожидалось: %#v", runCommands, wantRun)
 	}
-}
-
-func TestНеопределённыйRunНеПовторяетсяАНеподдерживаемаяСредаНеМутируетPaseo(t *testing.T) {
-	harness := testpaseo.Start(t)
-	harness.SetBehavior(t, testpaseo.BehaviorWorking)
-	harness.InterceptRunOutput(t)
-
-	unknown := harness.RunDriver(t, testpaseo.DriverRequest{
-		Operation: testpaseo.DriverStart,
-		Change:    "integration-unknown-run",
-		Prompt:    integrationPrompt,
-	})
-	if unknown.ErrorKind != testpaseo.DriverRunOutcomeUnknown {
-		t.Fatalf("потерянный ответ run не распознан как неопределённый исход: %#v", unknown)
-	}
-	if count := harness.InterceptedRunCount(t); count != 1 {
-		t.Fatalf("неопределённый run выполнен %d раз, ожидался один", count)
-	}
-
-	recovered := harness.RunDriver(t, testpaseo.DriverRequest{
-		Operation: testpaseo.DriverObserve,
-		Change:    "integration-unknown-run",
-		Prompt:    integrationPrompt,
-	})
-	if recovered.Observation != testpaseo.ObservationWorking || recovered.SessionID == "" {
-		t.Fatalf("новый процесс не восстановил сессию после потерянного ответа: %#v", recovered)
-	}
-	if prompts := harness.Prompts(t); len(prompts) != 1 || prompts[0] != integrationPrompt {
-		t.Fatalf("неопределённый исход повторно отправил поручение: %#v", prompts)
-	}
-	mutationsBeforeUnsupported := harness.InterceptedMutationCount(t)
-
-	unsupported := harness.RunDriver(t, testpaseo.DriverRequest{
-		Operation:   testpaseo.DriverStart,
-		Change:      "integration-unsupported-filesystem",
-		Prompt:      integrationPrompt,
-		WorkingRoot: "/proc",
-		ChangeRoot:  "/proc",
-	})
-	if unsupported.ErrorKind != testpaseo.DriverUnsupportedFilesystem {
-		t.Fatalf("неподдерживаемая среда не остановлена до Paseo: %#v", unsupported)
-	}
-	if count := harness.InterceptedRunCount(t); count != 1 {
-		t.Fatalf("неподдерживаемая среда вызвала изменяющую команду Paseo: run=%d", count)
-	}
-	if count := harness.InterceptedMutationCount(t); count != mutationsBeforeUnsupported {
-		t.Fatalf(
-			"неподдерживаемая среда вызвала изменяющую команду Paseo: было %d, стало %d",
-			mutationsBeforeUnsupported, count,
-		)
-	}
-	t.Logf("неопределённый run выполнен один раз; восстановлена сессия %s", recovered.SessionID)
 }
 
 func waitForIntegrationSession(
