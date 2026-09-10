@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/notify"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
@@ -20,7 +18,7 @@ type commandGateway struct {
 	loadNewSessionInputs func(context.Context, configurationSnapshot, paseoRuntime) (newSessionInputs, error)
 	delivery             *snapshotInterventionDelivery
 	clock                waitClock
-	output               io.Writer
+	reporter             *commandReporter
 	reportedSessions     map[string]struct{}
 }
 
@@ -41,16 +39,23 @@ func (gateway *commandGateway) RefreshActiveChange(ctx context.Context, expected
 	if cwd != gateway.repository.Root() || currentKey != expected || current.changeRoot != gateway.initialChange.changeRoot {
 		return errors.New("контекст выбранного OpenSpec change изменился")
 	}
+	gateway.reporter.openSpecRead()
 	return nil
 }
 
 func (gateway *commandGateway) FindActiveWorkspace(ctx context.Context, change orchestrator.ChangeKey, cwd string) (orchestrator.ManagedWorkspaceObservation, error) {
-	return gateway.paseo.FindActiveWorkspace(ctx, change, cwd)
+	observation, err := gateway.paseo.FindActiveWorkspace(ctx, change, cwd)
+	if err == nil {
+		gateway.reporter.workspaceRead()
+	}
+	return observation, err
 }
 
 func (gateway *commandGateway) FindOwnSessions(ctx context.Context, change orchestrator.ChangeKey, workspace orchestrator.WorkspaceID, cwd string) (orchestrator.OwnSessionObservation, error) {
 	observation, err := gateway.paseo.FindOwnSessions(ctx, change, workspace, cwd)
 	if err == nil {
+		gateway.reporter.ownSessionsRead()
+		gateway.delivery.observeSessionProgress(observation)
 		gateway.reportRecoveredSession(observation)
 	}
 	return observation, err
@@ -59,6 +64,8 @@ func (gateway *commandGateway) FindOwnSessions(ctx context.Context, change orche
 func (gateway *commandGateway) ObserveOwnSession(ctx context.Context, change orchestrator.ChangeKey, workspace orchestrator.WorkspaceID, cwd string, session orchestrator.SessionID) (orchestrator.OwnSessionObservation, error) {
 	observation, err := gateway.paseo.ObserveOwnSession(ctx, change, workspace, cwd, session)
 	if err == nil {
+		gateway.reporter.ownSessionRead()
+		gateway.delivery.observeSessionProgress(observation)
 		gateway.reportRecoveredSession(observation)
 	}
 	return observation, err
@@ -68,11 +75,15 @@ func (gateway *commandGateway) ReadWorkingTree(ctx context.Context, cwd string) 
 	if cwd != gateway.repository.Root() {
 		return nil, errors.New("канонический рабочий Git-контекст изменился")
 	}
-	return gateway.repository.Read(ctx)
+	observation, err := gateway.repository.Read(ctx)
+	if err == nil {
+		gateway.reporter.workingTreeRead()
+	}
+	return observation, err
 }
 
 func (gateway *commandGateway) PrepareNewSession(ctx context.Context, _ orchestrator.ChangeKey, _ string) (orchestrator.PreparedSessionCreation, error) {
-	fmt.Fprintln(gateway.output, "Проверяю конфигурацию и каталог новой сессии.")
+	gateway.reporter.checkingNewSessionInputs()
 	if err := gateway.delivery.Resolve(); err != nil {
 		return orchestrator.PreparedSessionCreation{}, err
 	}
@@ -80,13 +91,14 @@ func (gateway *commandGateway) PrepareNewSession(ctx context.Context, _ orchestr
 	if err != nil {
 		return orchestrator.PreparedSessionCreation{}, err
 	}
+	gateway.reporter.newSessionInputsChecked()
 	return orchestrator.NewPreparedSessionCreation(func(
 		ctx context.Context,
 		change orchestrator.ChangeKey,
 		workspace orchestrator.WorkspaceID,
 		cwd string,
 	) (orchestrator.SessionID, error) {
-		fmt.Fprintln(gateway.output, "Создаю собственную сессию подготовки коммитов.")
+		gateway.reporter.creatingSession()
 		created, err := gateway.paseo.CreateOwnSession(
 			ctx,
 			change,
@@ -97,7 +109,7 @@ func (gateway *commandGateway) PrepareNewSession(ctx context.Context, _ orchestr
 		)
 		if err == nil {
 			gateway.reportedSessions[created.String()] = struct{}{}
-			fmt.Fprintf(gateway.output, "Создана собственная сессия %s.\n", created.String())
+			gateway.reporter.sessionCreated(created)
 		}
 		return created, err
 	}), nil
@@ -108,12 +120,16 @@ func (gateway *commandGateway) knownInterventionSession(session orchestrator.Ses
 }
 
 func (gateway *commandGateway) CreateWorkspace(ctx context.Context, change orchestrator.ChangeKey, cwd string) error {
-	fmt.Fprintln(gateway.output, "Создаю workspace выбранного change.")
-	return gateway.paseo.CreateWorkspace(ctx, change, cwd)
+	gateway.reporter.creatingWorkspace()
+	err := gateway.paseo.CreateWorkspace(ctx, change, cwd)
+	if err == nil {
+		gateway.reporter.workspaceCreated()
+	}
+	return err
 }
 
 func (gateway *commandGateway) WaitOwnSession(ctx context.Context, session orchestrator.SessionID) error {
-	fmt.Fprintf(gateway.output, "Ожидаю завершения хода сессии %s.\n", session.String())
+	gateway.reporter.waitingForTurn(session)
 	finished := make(chan error, 1)
 	go func() {
 		finished <- gateway.paseo.WaitOwnSession(ctx, session)
@@ -126,7 +142,7 @@ func (gateway *commandGateway) WaitOwnSession(ctx context.Context, session orche
 		case err := <-finished:
 			return err
 		case <-ticker.C():
-			fmt.Fprintf(gateway.output, "Ожидание продолжается: сессия %s.\n", session.String())
+			gateway.reporter.waitHeartbeat(session)
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -134,7 +150,7 @@ func (gateway *commandGateway) WaitOwnSession(ctx context.Context, session orche
 }
 
 func (gateway *commandGateway) ArchiveOwnSession(ctx context.Context, change orchestrator.ChangeKey, workspace orchestrator.WorkspaceID, cwd string, session orchestrator.ManagedSession) error {
-	fmt.Fprintf(gateway.output, "Архивирую собственную сессию %s.\n", session.ID().String())
+	gateway.reporter.archivingSession(session.ID())
 	return gateway.paseo.ArchiveOwnSession(ctx, change, workspace, cwd, session)
 }
 
@@ -154,27 +170,30 @@ func (gateway *commandGateway) reportRecoveredSession(observation orchestrator.O
 		return
 	}
 	gateway.reportedSessions[id.String()] = struct{}{}
-	fmt.Fprintf(gateway.output, "Восстановлена собственная сессия %s.\n", id.String())
+	gateway.reporter.sessionRecovered(id)
 }
 
 type snapshotInterventionDelivery struct {
 	snapshot configurationSnapshot
 	build    interventionDeliveryFactory
-	output   io.Writer
+	reporter *commandReporter
 	resolved bool
 	delivery notify.Deliverer
 	err      error
+	episode  notify.EpisodeKey
+	hasEvent bool
+	retrying bool
 }
 
 func newSnapshotInterventionDelivery(
 	snapshot configurationSnapshot,
 	build interventionDeliveryFactory,
-	output io.Writer,
+	reporter *commandReporter,
 ) (*snapshotInterventionDelivery, error) {
-	if snapshot == nil || build == nil || output == nil {
+	if snapshot == nil || build == nil || reporter == nil {
 		return nil, errors.New("некорректная конфигурация доставки уведомлений")
 	}
-	return &snapshotInterventionDelivery{snapshot: snapshot, build: build, output: output}, nil
+	return &snapshotInterventionDelivery{snapshot: snapshot, build: build, reporter: reporter}, nil
 }
 
 func (delivery *snapshotInterventionDelivery) Resolve() error {
@@ -200,26 +219,35 @@ func (delivery *snapshotInterventionDelivery) Deliver(
 	if delivery == nil || ctx == nil || event == nil {
 		return notify.NewDeliveryError()
 	}
-	fmt.Fprintf(
-		delivery.output,
-		"Требуется участие человека: %s. Сессия: %s\n",
-		interventionReason(event.Reason()),
-		event.SessionLink().String(),
-	)
+	key := event.EpisodeKey()
+	if delivery.hasEvent && delivery.episode == key && delivery.retrying {
+		delivery.reporter.retryingInterventionDelivery()
+	} else {
+		delivery.reporter.interventionRequired(event)
+	}
+	delivery.episode = key
+	delivery.hasEvent = true
 	if err := delivery.Resolve(); err != nil {
-		fmt.Fprintf(
-			delivery.output,
-			"Уведомление не доставлено: %v. Исправьте конфигурацию и перезапустите CLI; сопровождение той же сессии продолжается.\n",
-			err,
-		)
+		delivery.retrying = true
+		delivery.reporter.interventionConfigurationFailed(err)
 		return notify.NewDeliveryError()
 	}
 	if err := delivery.delivery.Deliver(ctx, event); err != nil {
-		fmt.Fprintln(delivery.output, "Уведомление не доставлено; сопровождение той же сессии продолжается.")
+		delivery.retrying = true
+		delivery.reporter.interventionDeliveryFailed()
 		return err
 	}
-	fmt.Fprintln(delivery.output, "Уведомление доставлено; сопровождение той же сессии продолжается.")
+	delivery.retrying = false
+	delivery.reporter.interventionDelivered()
 	return nil
+}
+
+func (delivery *snapshotInterventionDelivery) observeSessionProgress(observation orchestrator.OwnSessionObservation) {
+	if _, working := observation.(orchestrator.WorkingOwnSession); !working {
+		return
+	}
+	delivery.hasEvent = false
+	delivery.retrying = false
 }
 
 var _ notify.Deliverer = (*snapshotInterventionDelivery)(nil)

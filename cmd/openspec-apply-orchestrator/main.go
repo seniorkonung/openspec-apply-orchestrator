@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,7 +10,7 @@ import (
 func main() {
 	workingDirectory, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintln(os.Stdout, "Ошибка: не удалось определить рабочий каталог.")
+		newCommandReporter(os.Stdout, false).line("Ошибка: не удалось определить рабочий каталог.")
 		os.Exit(exitObstacle)
 	}
 

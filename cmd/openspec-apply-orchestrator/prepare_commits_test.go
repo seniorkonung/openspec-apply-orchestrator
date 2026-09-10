@@ -111,7 +111,7 @@ func TestPrepareCommitsВосстанавливаетСессиюБезЧтен�
 			fixture.dependencies(),
 		)
 	}()
-	output.waitForCount(t, "снимок канала повреждён", 1)
+	output.waitForCount(t, "Уведомление не доставлено", 1)
 	cancel()
 	code := <-result
 

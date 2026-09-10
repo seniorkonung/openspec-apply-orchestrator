@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"time"
 
@@ -30,6 +29,7 @@ type changeSelection struct {
 
 type commandOptions struct {
 	selection changeSelection
+	verbose   bool
 }
 
 type resolvedChange struct {
@@ -105,10 +105,15 @@ func runCommand(
 	}
 	options, err := parseCommand(arguments)
 	if err != nil {
-		fmt.Fprintln(output, "Ошибка аргументов: используйте prepare-commits --change <name> [--store <id>].")
-		return exitUsageOrConfiguration
+		return newCommandReporter(output, false).invalidArguments()
 	}
-	return runPrepareCommits(ctx, options, workingDirectory, output, dependencies)
+	return runPrepareCommits(
+		ctx,
+		options,
+		workingDirectory,
+		newCommandReporter(output, options.verbose),
+		dependencies,
+	)
 }
 
 func parseCommand(arguments []string) (commandOptions, error) {
@@ -119,13 +124,17 @@ func parseCommand(arguments []string) (commandOptions, error) {
 	flags.SetOutput(io.Discard)
 	changeName := flags.String("change", "", "имя активного OpenSpec change")
 	storeID := flags.String("store", "", "идентификатор OpenSpec store")
+	verbose := flags.Bool("verbose", false, "показывать результаты технических чтений и проверок")
 	if err := flags.Parse(arguments[1:]); err != nil || flags.NArg() != 0 || *changeName == "" {
 		return commandOptions{}, errors.New("некорректные аргументы")
 	}
 	if _, err := openspec.NewSelection(*changeName, *storeID); err != nil {
 		return commandOptions{}, err
 	}
-	return commandOptions{selection: changeSelection{changeName: *changeName, storeID: *storeID}}, nil
+	return commandOptions{
+		selection: changeSelection{changeName: *changeName, storeID: *storeID},
+		verbose:   *verbose,
+	}, nil
 }
 
 func (dependencies commandDependencies) valid() bool {
@@ -140,46 +149,51 @@ func runPrepareCommits(
 	ctx context.Context,
 	options commandOptions,
 	workingDirectory string,
-	output io.Writer,
+	reporter *commandReporter,
 	dependencies commandDependencies,
 ) (exitCode int) {
-	fmt.Fprintf(output, "Проверяю OpenSpec change %s.\n", options.selection.changeName)
+	reporter.checkingOpenSpec(options.selection.changeName)
 	changeSource, err := dependencies.newChangeSource(workingDirectory)
 	if err != nil {
-		return reportCommandError(output, err)
+		return reporter.commandError(err)
 	}
 	change, err := changeSource.Resolve(ctx, options.selection)
 	if err != nil {
-		return reportCommandError(output, err)
+		return reporter.commandError(err)
 	}
+	reporter.openSpecRead()
 
-	fmt.Fprintln(output, "Проверяю рабочий Git.")
+	reporter.checkingWorkingTree()
 	repository, err := dependencies.openRepository(ctx, workingDirectory)
 	if err != nil {
-		return reportCommandError(output, err)
+		return reporter.commandError(err)
 	}
+	reporter.workingTreeOpened()
 	configuration, err := dependencies.readConfiguration(repository.Root())
 	if err != nil {
-		return reportCommandError(output, err)
+		return reporter.commandError(err)
 	}
+	reporter.configurationSnapshotRead()
 
-	fmt.Fprintln(output, "Проверяю локальную среду и владение change.")
+	reporter.checkingLocalOwnership()
 	lock, err := dependencies.acquireChangeLock(repository.Root(), change.changeRoot)
 	if err != nil {
-		return reportCommandError(output, err)
+		return reporter.commandError(err)
 	}
+	reporter.localOwnershipAcquired()
 	defer func() {
 		if closeErr := lock.Close(); closeErr != nil && exitCode == exitSuccess {
-			fmt.Fprintln(output, "Ошибка: не удалось освободить локальное владение change.")
+			reporter.changeLockReleaseFailed()
 			exitCode = exitObstacle
 		}
 	}()
 
-	fmt.Fprintln(output, "Проверяю совместимость локального Paseo.")
+	reporter.checkingPaseo()
 	paseoRuntime, err := dependencies.openPaseo(ctx)
 	if err != nil {
-		return reportCommandError(output, err)
+		return reporter.commandError(err)
 	}
+	reporter.paseoCompatible()
 	changeKey, err := orchestrator.NewCommitPreparationChangeKey(orchestrator.CommitPreparationIdentity{
 		WorkingTreeRoot:  repository.Root(),
 		PlanningHomeRoot: change.planningHomeRoot,
@@ -187,16 +201,16 @@ func runPrepareCommits(
 		ServerID:         paseoRuntime.ServerID(),
 	})
 	if err != nil {
-		return reportCommandError(output, err)
+		return reporter.commandError(err)
 	}
 
 	delivery, err := newSnapshotInterventionDelivery(
 		configuration,
 		dependencies.newInterventionDelivery,
-		output,
+		reporter,
 	)
 	if err != nil {
-		return reportCommandError(output, err)
+		return reporter.commandError(err)
 	}
 	gateway := &commandGateway{
 		selection:            options.selection,
@@ -208,7 +222,7 @@ func runPrepareCommits(
 		loadNewSessionInputs: dependencies.loadNewSessionInputs,
 		delivery:             delivery,
 		clock:                dependencies.waitClock,
-		output:               output,
+		reporter:             reporter,
 		reportedSessions:     make(map[string]struct{}),
 	}
 	reconciler, err := orchestrator.NewMonitoredCommitPreparationReconcilerWithClock(
@@ -218,13 +232,13 @@ func runPrepareCommits(
 		dependencies.interventionClock,
 	)
 	if err != nil {
-		return reportCommandError(output, err)
+		return reporter.commandError(err)
 	}
 
-	fmt.Fprintln(output, "Сопровождение подготовки коммитов запущено.")
+	reporter.monitoringStarted()
 	outcome, err := reconciler.Run(ctx, changeKey, repository.Root())
 	if err != nil {
-		return reportCommandError(output, err)
+		return reporter.commandError(err)
 	}
-	return reportOutcome(output, paseoRuntime, outcome)
+	return reporter.outcome(paseoRuntime, outcome)
 }

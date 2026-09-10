@@ -456,7 +456,7 @@
   - **Files likely touched:** `cmd/openspec-apply-orchestrator/prepare_commits.go`, `cmd/openspec-apply-orchestrator/gateway.go`, `cmd/openspec-apply-orchestrator/production.go`, `cmd/openspec-apply-orchestrator/reporting.go`, `cmd/openspec-apply-orchestrator/prepare_commits_test.go`.
   - **Estimated scope:** M.
 
-- [ ] 3.7 Выводить ход длительного сопровождения единым человекочитаемым репортёром
+- [x] 3.7 Выводить ход длительного сопровождения единым человекочитаемым репортёром
   - **Acceptance criteria:**
     - Обычный режим выдаёт только русский человекочитаемый stdout, а `--verbose` добавляет результаты технических чтений и проверок; отдельный `--log-format` и JSON-режим не предоставляются.
     - Проверки, создание или восстановление, ожидание хода, ожидание человека, доставка, повтор, закрытие и препятствие видны в хронологическом порядке; неизменные технические чтения скрыты, а heartbeat показывает длительное ожидание без нового обращения к Paseo.
