@@ -121,7 +121,7 @@ func TestProductionКомандаПродолжаетТуЖеСессиюПос�
 	}
 
 	const followUp = "Продолжить подготовку коммитов в той же сессии"
-	harness.SetBehavior(t, testpaseo.BehaviorDelayedFinish)
+	harness.SetBehavior(t, testpaseo.BehaviorAwaitRelease)
 	harness.RunCLI(t, "send", sessionID, followUp, "--no-wait", "--json")
 	waitForRecordedCommandEventCount(t, harness, testpaseo.CommandStarted, "wait", 2)
 	if err := validateInterventionContinuationEvents(harness.RecordedCommandEvents(t), sessionID); err != nil {
@@ -137,6 +137,7 @@ func TestProductionКомандаПродолжаетТуЖеСессиюПос�
 		"-c", "user.email=integration@example.invalid",
 		"commit", "-m", "test: complete continued intervention",
 	)
+	harness.ReleasePrompt(t)
 	waitForRecordedCommandEventCount(t, harness, testpaseo.CommandFinished, "wait", 2)
 	harness.RunCLI(t, "archive", sessionID, "--json")
 	result := process.wait(t)

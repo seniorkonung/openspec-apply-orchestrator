@@ -40,6 +40,7 @@ func ModeID() string {
 const (
 	controlEnvironment = "OA_TESTPASEO_CONTROL"
 	recordEnvironment  = "OA_TESTPASEO_RECORD"
+	releaseEnvironment = "OA_TESTPASEO_RELEASE"
 )
 
 type CLIResult struct {
@@ -68,7 +69,7 @@ const (
 	BehaviorCommitAndWork Behavior = "commit-and-work"
 	BehaviorPermission    Behavior = "permission"
 	BehaviorError         Behavior = "error"
-	BehaviorDelayedFinish Behavior = "delayed-finish"
+	BehaviorAwaitRelease  Behavior = "await-release"
 )
 
 type DriverOperation string
@@ -136,6 +137,7 @@ type Harness struct {
 	workspace   string
 	changeRoot  string
 	controlPath string
+	releasePath string
 	recordPath  string
 	driverPath  string
 	proxyPath   string
@@ -195,6 +197,7 @@ func start(t *testing.T, exportEnvironment, withUserPlugin bool) *Harness {
 		workspace:   filepath.Join(home, "workspace"),
 		changeRoot:  filepath.Join(home, "change"),
 		controlPath: filepath.Join(home, "provider.control"),
+		releasePath: filepath.Join(home, "provider.release"),
 		recordPath:  filepath.Join(home, "provider-prompts.jsonl"),
 		driverPath:  filepath.Join(home, "reconcile-driver"),
 		proxyPath:   filepath.Join(home, "proxy-bin", "paseo"),
@@ -264,9 +267,14 @@ func (harness *Harness) SetBehavior(t *testing.T, behavior Behavior) {
 	t.Helper()
 	switch behavior {
 	case BehaviorWorking, BehaviorFinish, BehaviorCommit, BehaviorCommitAndWork,
-		BehaviorPermission, BehaviorError, BehaviorDelayedFinish:
+		BehaviorPermission, BehaviorError, BehaviorAwaitRelease:
 	default:
 		t.Fatalf("неизвестное поведение тестового провайдера: %q", behavior)
+	}
+	if behavior == BehaviorAwaitRelease {
+		if err := os.WriteFile(harness.releasePath, nil, 0o600); err != nil {
+			t.Fatalf("подготовить барьер тестового провайдера: %v", err)
+		}
 	}
 	temporary := harness.controlPath + ".new"
 	if err := os.WriteFile(temporary, []byte(behavior+"\n"), 0o600); err != nil {
@@ -274,6 +282,17 @@ func (harness *Harness) SetBehavior(t *testing.T, behavior Behavior) {
 	}
 	if err := os.Rename(temporary, harness.controlPath); err != nil {
 		t.Fatalf("применить поведение тестового провайдера: %v", err)
+	}
+}
+
+func (harness *Harness) ReleasePrompt(t *testing.T) {
+	t.Helper()
+	temporary := harness.releasePath + ".new"
+	if err := os.WriteFile(temporary, []byte("release\n"), 0o600); err != nil {
+		t.Fatalf("записать освобождение тестового провайдера: %v", err)
+	}
+	if err := os.Rename(temporary, harness.releasePath); err != nil {
+		t.Fatalf("освободить тестовый провайдер: %v", err)
 	}
 }
 
@@ -534,6 +553,7 @@ func (harness *Harness) writeConfig(providerPath, pluginPath string) error {
 					"env": map[string]string{
 						controlEnvironment: harness.controlPath,
 						recordEnvironment:  harness.recordPath,
+						releaseEnvironment: harness.releasePath,
 					},
 					"models": []map[string]any{{
 						"id": ModelID, "label": "Deterministic", "isDefault": true,
@@ -546,6 +566,7 @@ func (harness *Harness) writeConfig(providerPath, pluginPath string) error {
 					"env": map[string]string{
 						controlEnvironment: harness.controlPath,
 						recordEnvironment:  harness.recordPath,
+						releaseEnvironment: harness.releasePath,
 					},
 					"models": []map[string]any{{
 						"id": ModelID, "label": "Deterministic", "isDefault": true,

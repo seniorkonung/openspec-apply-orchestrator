@@ -145,9 +145,15 @@ func (provider *providerServer) runPrompt(id json.RawMessage, sessionID string) 
 			time.Sleep(50 * time.Millisecond)
 		case BehaviorError:
 			return provider.respondError(id, -32000, "управляемая ошибка тестового провайдера")
-		case BehaviorDelayedFinish:
-			time.Sleep(40 * time.Second)
-			return provider.respond(id, map[string]string{"stopReason": "end_turn"})
+		case BehaviorAwaitRelease:
+			released, err := readPromptRelease()
+			if err != nil {
+				return err
+			}
+			if released {
+				return provider.respond(id, map[string]string{"stopReason": "end_turn"})
+			}
+			time.Sleep(50 * time.Millisecond)
 		default:
 			return fmt.Errorf("неизвестное поведение тестового провайдера: %q", behavior)
 		}
@@ -230,6 +236,14 @@ func readBehavior() (Behavior, error) {
 		return "", fmt.Errorf("прочитать управление провайдером: %w", err)
 	}
 	return Behavior(strings.TrimSpace(string(behavior))), nil
+}
+
+func readPromptRelease() (bool, error) {
+	release, err := os.ReadFile(os.Getenv(releaseEnvironment))
+	if err != nil {
+		return false, fmt.Errorf("прочитать барьер тестового провайдера: %w", err)
+	}
+	return strings.TrimSpace(string(release)) == "release", nil
 }
 
 func (provider *providerServer) respond(id json.RawMessage, result any) error {
