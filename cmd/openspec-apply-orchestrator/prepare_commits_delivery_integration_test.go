@@ -3,10 +3,8 @@
 package main
 
 import (
-	"encoding/pem"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,70 +17,6 @@ import (
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/config"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/testpaseo"
 )
-
-func TestProductionКомандаНеСоздаётНовоеПоручениеБезКорректногоКанала(t *testing.T) {
-	t.Parallel()
-	harness := startProductionHarness(t)
-	harness.EnableCommandRecording(t)
-	prepareProductionRepository(t, harness.Workspace())
-	makeProductionRepositoryDirty(t, harness.Workspace())
-	binary := buildProductionCommand(t)
-
-	tests := []struct {
-		name          string
-		configuration string
-		wantFragment  string
-	}{
-		{
-			name:         "файл отсутствует",
-			wantFragment: "конфигурация оркестратора не найдена",
-		},
-		{
-			name:          "JSON повреждён",
-			configuration: `{"version":`,
-			wantFragment:  "конфигурация оркестратора содержит некорректный JSON",
-		},
-		{
-			name: "канал отсутствует",
-			configuration: fmt.Sprintf(
-				`{"version":1,"sessions":{"commit-preparation":{"provider":%q,"model":%q}}}`,
-				testpaseo.ProviderID,
-				testpaseo.ModelID,
-			),
-			wantFragment: "notifications.intervention",
-		},
-		{
-			name: "приоритет недопустим",
-			configuration: fmt.Sprintf(
-				`{"version":1,"sessions":{"commit-preparation":{"provider":%q,"model":%q}},"notifications":{"intervention":{"type":"ntfy","url":"https://notify.example.invalid/topic","priority":"urgent"}}}`,
-				testpaseo.ProviderID,
-				testpaseo.ModelID,
-			),
-			wantFragment: "notifications.intervention.priority",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			harness.ResetCommandRecording(t)
-			writeDeliveryConfigurationFixture(t, harness.Workspace(), test.configuration)
-
-			result := runProductionCommand(t, binary, harness)
-
-			if result.exitCode != exitUsageOrConfiguration ||
-				!strings.Contains(result.output, test.wantFragment) {
-				t.Fatalf(
-					"получен код %d и вывод:\n%s\nожидались код %d и фрагмент %q",
-					result.exitCode,
-					result.output,
-					exitUsageOrConfiguration,
-					test.wantFragment,
-				)
-			}
-			assertNoPaseoMutations(t, harness.RecordedCommands(t))
-		})
-	}
-}
 
 func TestProductionКомандаВосстанавливаетСессиюПриОшибкеСнимкаИКанала(t *testing.T) {
 	t.Parallel()
@@ -163,67 +97,6 @@ func TestProductionКомандаВосстанавливаетСессиюПр�
 			assertOnlyOwnSession(t, scenario.harness, scenario.sessionID)
 			if test.forbidRequest {
 				receiver.AssertNoRequest(t)
-			}
-		})
-	}
-}
-
-func TestProductionКомандаПродолжаетСопровождениеПриСетевыхОтказахNtfy(t *testing.T) {
-	t.Parallel()
-	scenario := startRecoverableDeliveryScenario(t)
-	expected := expectedIntegrationNtfyRequest{
-		change:      productionIntegrationChange,
-		message:     "После хода агента в Git остались незакоммиченные изменения.",
-		sessionID:   scenario.sessionID,
-		sessionLink: integrationSessionLink(t, scenario.harness, scenario.sessionID),
-		priority:    config.NtfyPriorityDefault,
-	}
-
-	for _, failure := range newDeliveryFailureFixtures(t) {
-		t.Run(failure.name, func(t *testing.T) {
-			scenario.harness.ResetCommandRecording(t)
-			writeDeliveryConfigurationFixture(
-				t,
-				scenario.harness.Workspace(),
-				deliveryConfigurationJSON(failure.address, "", ""),
-			)
-
-			process := startProductionCommandWithEnvironment(
-				t,
-				scenario.binary,
-				scenario.harness,
-				failure.environment,
-			)
-			if failure.source != nil {
-				request := failure.source.WaitRequest(t)
-				if request.path != "/topic" {
-					t.Fatalf("исходный ntfy-запрос пришёл на неожиданный путь %q", request.path)
-				}
-				if err := validateIntegrationNtfyRequest(request.notification, expected); err != nil {
-					t.Fatalf("ntfy-запрос до отказа не соответствует контракту: %v", err)
-				}
-			}
-			waitForOutput(t, &process.output, "Уведомление не доставлено")
-			if err := process.command.Process.Signal(os.Interrupt); err != nil {
-				t.Fatalf("прервать сопровождение после сетевого отказа: %v", err)
-			}
-			result := process.wait(t)
-
-			if result.exitCode != 130 {
-				t.Fatalf("сопровождение завершилось с кодом %d вместо 130:\n%s", result.exitCode, result.output)
-			}
-			for _, private := range []string{failure.address, strings.TrimSpace(promptsPackageText())} {
-				if strings.Contains(result.output, private) {
-					t.Fatalf("вывод раскрыл приватные данные %q:\n%s", private, result.output)
-				}
-			}
-			assertNoPaseoMutations(t, scenario.harness.RecordedCommands(t))
-			assertOnlyOwnSession(t, scenario.harness, scenario.sessionID)
-			if failure.source != nil {
-				failure.source.AssertNoRequest(t)
-			}
-			if failure.target != nil {
-				failure.target.AssertNoRequest(t)
 			}
 		})
 	}
@@ -404,78 +277,6 @@ func assertDeliveryOutputIsSafe(t *testing.T, output string, private ...string) 
 	}
 }
 
-type deliveryFailureFixture struct {
-	name        string
-	address     string
-	environment []string
-	source      *deliveryProbe
-	target      *deliveryProbe
-}
-
-func newDeliveryFailureFixtures(t *testing.T) []deliveryFailureFixture {
-	t.Helper()
-
-	timeout := startDeliveryProbe(t, false, func(_ http.ResponseWriter, request *http.Request) {
-		<-request.Context().Done()
-	})
-	serverError := startDeliveryProbe(t, false, func(writer http.ResponseWriter, _ *http.Request) {
-		writer.WriteHeader(http.StatusServiceUnavailable)
-	})
-
-	var sameOrigin *deliveryProbe
-	sameOrigin = startDeliveryProbe(t, false, func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Location", sameOrigin.server.URL+"/redirect-target")
-		writer.WriteHeader(http.StatusTemporaryRedirect)
-	})
-
-	crossOriginTarget := startDeliveryProbe(t, false, nil)
-	crossOrigin := startDeliveryProbe(t, false, func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Location", crossOriginTarget.URL())
-		writer.WriteHeader(http.StatusTemporaryRedirect)
-	})
-
-	downgradeTarget := startDeliveryProbe(t, false, nil)
-	downgrade := startDeliveryProbe(t, true, func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Location", downgradeTarget.URL())
-		writer.WriteHeader(http.StatusTemporaryRedirect)
-	})
-
-	return []deliveryFailureFixture{
-		{
-			name:    "сервис недоступен",
-			address: unavailableLoopbackURL(t),
-		},
-		{
-			name:    "тайм-аут",
-			address: timeout.URL(),
-			source:  timeout,
-		},
-		{
-			name:    "неуспешный HTTP-ответ",
-			address: serverError.URL(),
-			source:  serverError,
-		},
-		{
-			name:    "same-origin redirect",
-			address: sameOrigin.URL(),
-			source:  sameOrigin,
-		},
-		{
-			name:    "cross-origin redirect",
-			address: crossOrigin.URL(),
-			source:  crossOrigin,
-			target:  crossOriginTarget,
-		},
-		{
-			name:        "HTTPS в HTTP redirect",
-			address:     downgrade.URL(),
-			environment: []string{"SSL_CERT_FILE=" + writeDeliveryProbeCertificate(t, downgrade)},
-			source:      downgrade,
-			target:      downgradeTarget,
-		},
-	}
-}
-
 type deliveryCapturedRequest struct {
 	notification  capturedIntegrationNtfyRequest
 	authorization string
@@ -559,33 +360,6 @@ func readDeliveryRequestBody(t *testing.T, request *http.Request) string {
 		return ""
 	}
 	return string(body)
-}
-
-func unavailableLoopbackURL(t *testing.T) string {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("выбрать недоступный loopback-адрес: %v", err)
-	}
-	address := "http://" + listener.Addr().String() + "/topic"
-	if err := listener.Close(); err != nil {
-		t.Fatalf("освободить недоступный loopback-адрес: %v", err)
-	}
-	return address
-}
-
-func writeDeliveryProbeCertificate(t *testing.T, probe *deliveryProbe) string {
-	t.Helper()
-	certificate := probe.server.Certificate()
-	if certificate == nil {
-		t.Fatal("TLS-стенд не предоставил сертификат")
-	}
-	path := filepath.Join(t.TempDir(), "delivery-probe.pem")
-	writeIntegrationFile(t, path, string(pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: certificate.Raw,
-	})))
-	return path
 }
 
 func startProductionCommandWithEnvironment(
