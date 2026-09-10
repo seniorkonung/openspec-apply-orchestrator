@@ -102,6 +102,18 @@ type KnownInterventionSessionFunc func(SessionID) (notify.KnownSession, error)
 
 type interventionPauseFunc func(context.Context, time.Duration) error
 
+// InterventionClock управляет редким ожиданием между наблюдениями сессии,
+// переданной человеку.
+type InterventionClock interface {
+	Pause(context.Context, time.Duration) error
+}
+
+type systemInterventionClock struct{}
+
+func (systemInterventionClock) Pause(ctx context.Context, interval time.Duration) error {
+	return pauseInterventionObservation(ctx, interval)
+}
+
 type interventionMonitoring struct {
 	delivery     notify.Deliverer
 	knownSession KnownInterventionSessionFunc
@@ -127,11 +139,30 @@ func NewMonitoredCommitPreparationReconciler(
 	delivery notify.Deliverer,
 	knownSession KnownInterventionSessionFunc,
 ) (*CommitPreparationReconciler, error) {
+	return NewMonitoredCommitPreparationReconcilerWithClock(
+		gateway,
+		delivery,
+		knownSession,
+		systemInterventionClock{},
+	)
+}
+
+// NewMonitoredCommitPreparationReconcilerWithClock создаёт наблюдаемый
+// reconciler с подменяемыми часами ожидания человека.
+func NewMonitoredCommitPreparationReconcilerWithClock(
+	gateway CommitPreparationGateway,
+	delivery notify.Deliverer,
+	knownSession KnownInterventionSessionFunc,
+	clock InterventionClock,
+) (*CommitPreparationReconciler, error) {
+	if clock == nil {
+		return nil, ErrInvalidReconciler
+	}
 	return newMonitoredCommitPreparationReconciler(
 		gateway,
 		delivery,
 		knownSession,
-		pauseInterventionObservation,
+		clock.Pause,
 	)
 }
 

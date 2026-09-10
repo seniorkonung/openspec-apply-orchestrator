@@ -8,6 +8,8 @@ import (
 	"io"
 	"time"
 
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/config"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/notify"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/openspec"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo"
@@ -63,6 +65,13 @@ type newSessionInputs struct {
 	prompt   prompts.CommitPreparationPrompt
 }
 
+type configurationSnapshot interface {
+	CommitPreparation() (config.UntrustedAgentSettings, error)
+	InterventionChannel() (config.InterventionChannel, error)
+}
+
+type interventionDeliveryFactory func(config.InterventionChannel) (notify.Deliverer, error)
+
 type waitClock interface {
 	NewTicker(time.Duration) waitTicker
 }
@@ -73,12 +82,15 @@ type waitTicker interface {
 }
 
 type commandDependencies struct {
-	newChangeSource      func(string) (changeSource, error)
-	openRepository       func(context.Context, string) (workingTreeRepository, error)
-	acquireChangeLock    func(string, string) (io.Closer, error)
-	openPaseo            func(context.Context) (paseoRuntime, error)
-	loadNewSessionInputs func(context.Context, string, paseoRuntime) (newSessionInputs, error)
-	clock                waitClock
+	newChangeSource         func(string) (changeSource, error)
+	openRepository          func(context.Context, string) (workingTreeRepository, error)
+	acquireChangeLock       func(string, string) (io.Closer, error)
+	openPaseo               func(context.Context) (paseoRuntime, error)
+	readConfiguration       func(string) (configurationSnapshot, error)
+	loadNewSessionInputs    func(context.Context, configurationSnapshot, paseoRuntime) (newSessionInputs, error)
+	newInterventionDelivery interventionDeliveryFactory
+	waitClock               waitClock
+	interventionClock       orchestrator.InterventionClock
 }
 
 func runCommand(
@@ -119,7 +131,9 @@ func parseCommand(arguments []string) (commandOptions, error) {
 func (dependencies commandDependencies) valid() bool {
 	return dependencies.newChangeSource != nil && dependencies.openRepository != nil &&
 		dependencies.acquireChangeLock != nil && dependencies.openPaseo != nil &&
-		dependencies.loadNewSessionInputs != nil && dependencies.clock != nil
+		dependencies.readConfiguration != nil && dependencies.loadNewSessionInputs != nil &&
+		dependencies.newInterventionDelivery != nil && dependencies.waitClock != nil &&
+		dependencies.interventionClock != nil
 }
 
 func runPrepareCommits(
@@ -141,6 +155,10 @@ func runPrepareCommits(
 
 	fmt.Fprintln(output, "Проверяю рабочий Git.")
 	repository, err := dependencies.openRepository(ctx, workingDirectory)
+	if err != nil {
+		return reportCommandError(output, err)
+	}
+	configuration, err := dependencies.readConfiguration(repository.Root())
 	if err != nil {
 		return reportCommandError(output, err)
 	}
@@ -172,18 +190,33 @@ func runPrepareCommits(
 		return reportCommandError(output, err)
 	}
 
+	delivery, err := newSnapshotInterventionDelivery(
+		configuration,
+		dependencies.newInterventionDelivery,
+		output,
+	)
+	if err != nil {
+		return reportCommandError(output, err)
+	}
 	gateway := &commandGateway{
 		selection:            options.selection,
 		initialChange:        change,
 		changeSource:         changeSource,
 		repository:           repository,
 		paseo:                paseoRuntime,
+		configuration:        configuration,
 		loadNewSessionInputs: dependencies.loadNewSessionInputs,
-		clock:                dependencies.clock,
+		delivery:             delivery,
+		clock:                dependencies.waitClock,
 		output:               output,
 		reportedSessions:     make(map[string]struct{}),
 	}
-	reconciler, err := orchestrator.NewCommitPreparationReconciler(gateway)
+	reconciler, err := orchestrator.NewMonitoredCommitPreparationReconcilerWithClock(
+		gateway,
+		delivery,
+		gateway.knownInterventionSession,
+		dependencies.interventionClock,
+	)
 	if err != nil {
 		return reportCommandError(output, err)
 	}

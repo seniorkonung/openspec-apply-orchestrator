@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/config"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/notify"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/openspec"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo"
@@ -83,6 +84,19 @@ func attentionReason(reason orchestrator.SessionAttentionReason) string {
 	case orchestrator.SessionAgentError:
 		return "агент сообщил об ошибке"
 	case orchestrator.SessionPermissionRequested:
+		return "Paseo запросил разрешение"
+	default:
+		return "причина не распознана"
+	}
+}
+
+func interventionReason(reason notify.Reason) string {
+	switch reason {
+	case notify.ReasonTurnFinished:
+		return "ход агента завершён, но Git остаётся изменённым"
+	case notify.ReasonAgentError:
+		return "агент сообщил об ошибке"
+	case notify.ReasonPermissionRequested:
 		return "Paseo запросил разрешение"
 	default:
 		return "причина не распознана"

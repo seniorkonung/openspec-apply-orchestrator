@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/config"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/notify"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/prompts"
@@ -40,6 +41,7 @@ func TestPrepareCommitsСохраняетStoreИВыполняетPreflightДо�
 		"openspec:new",
 		"openspec:resolve:selected-change:platform-specs",
 		"git:open",
+		"config:read",
 		"local:check",
 		"lock:acquire",
 		"paseo:check",
@@ -51,7 +53,7 @@ func TestPrepareCommitsСохраняетStoreИВыполняетPreflightДо�
 	if got := fixture.events.snapshot(); len(got) < len(wantPrefix) || !reflect.DeepEqual(got[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("неожиданный порядок preflight и сопровождения:\nполучено: %v\nожидался префикс: %v", got, wantPrefix)
 	}
-	if fixture.inputsLoaded != 0 || fixture.paseo.createdWorkspaces != 0 || fixture.paseo.createdSessions != 0 {
+	if fixture.snapshotReads != 1 || fixture.inputsLoaded != 0 || fixture.paseo.createdWorkspaces != 0 || fixture.paseo.createdSessions != 0 {
 		t.Fatalf("чистый Git вызвал чтение входов или мутацию: %v", fixture.events.snapshot())
 	}
 	if !strings.Contains(output.String(), "Поручение не требуется") {
@@ -61,7 +63,7 @@ func TestPrepareCommitsСохраняетStoreИВыполняетPreflightДо�
 
 func TestPrepareCommitsБезКаналаЗавершаетсяКодомДваДоМутаций(t *testing.T) {
 	fixture := newCommandFixture(t, orchestrator.DirtyWorkingTree{})
-	fixture.loadInputsError = &config.FieldError{
+	fixture.channelError = &config.FieldError{
 		Path: "notifications.intervention",
 		Kind: config.ErrMissingField,
 	}
@@ -84,7 +86,10 @@ func TestPrepareCommitsБезКаналаЗавершаетсяКодомДва�
 	if !strings.Contains(output.String(), "notifications.intervention") {
 		t.Fatalf("вывод не содержит путь отсутствующего канала: %s", output.String())
 	}
-	assertEventOrder(t, fixture.events.snapshot(), "git:read", "config:read")
+	assertEventOrder(t, fixture.events.snapshot(), "git:read", "config:intervention:view")
+	if countEvent(fixture.events.snapshot(), "config:session:view") != 0 {
+		t.Fatalf("после ошибки канала прочитаны настройки новой сессии: %v", fixture.events.snapshot())
+	}
 }
 
 func TestPrepareCommitsВосстанавливаетСессиюБезЧтенияТекущейКонфигурации(t *testing.T) {
@@ -93,27 +98,74 @@ func TestPrepareCommitsВосстанавливаетСессиюБезЧтен�
 	fixture.paseo.sessionID = "session-existing"
 	fixture.paseo.sessionStatus = "idle"
 	fixture.paseo.attentionReason = "finished"
-	fixture.loadInputsError = errors.New("текущая конфигурация повреждена")
-	var output bytes.Buffer
-
-	code := runCommand(
-		context.Background(),
-		[]string{"prepare-commits", "--change", "selected-change"},
-		fixture.workingRoot,
-		&output,
-		fixture.dependencies(),
-	)
+	fixture.channelError = errors.New("снимок канала повреждён")
+	ctx, cancel := context.WithCancel(context.Background())
+	var output synchronizedBuffer
+	result := make(chan int, 1)
+	go func() {
+		result <- runCommand(
+			ctx,
+			[]string{"prepare-commits", "--change", "selected-change"},
+			fixture.workingRoot,
+			&output,
+			fixture.dependencies(),
+		)
+	}()
+	output.waitForCount(t, "снимок канала повреждён", 1)
+	cancel()
+	code := <-result
 
 	if code != exitObstacle {
 		t.Fatalf("ожидался код препятствия 1, получен %d", code)
 	}
-	if fixture.inputsLoaded != 0 || fixture.paseo.createdSessions != 0 || fixture.paseo.archivedSessions != 0 {
+	if fixture.snapshotReads != 1 || fixture.inputsLoaded != 0 || fixture.paseo.createdSessions != 0 || fixture.paseo.archivedSessions != 0 {
 		t.Fatalf("восстановление прочитало входы создания или изменило сессию: %v", fixture.events.snapshot())
 	}
-	for _, fragment := range []string{"Восстановлена собственная сессия", "Требуется участие человека", "ссылка-сессии:session-existing"} {
+	for _, fragment := range []string{"Восстановлена собственная сессия", "Требуется участие человека", "paseo://h/server-1/agent/session-existing", "перезапустите CLI"} {
 		if !strings.Contains(output.String(), fragment) {
 			t.Fatalf("вывод восстановления не содержит %q: %s", fragment, output.String())
 		}
+	}
+}
+
+func TestPrepareCommitsПродолжаетСопровождатьПереданнуюЧеловекуСессию(t *testing.T) {
+	fixture := newCommandFixture(t, orchestrator.DirtyWorkingTree{})
+	fixture.paseo.workspaceExists = true
+	fixture.paseo.sessionID = "session-existing"
+	fixture.paseo.sessionStatus = "idle"
+	fixture.paseo.attentionReason = "finished"
+	ctx, cancel := context.WithCancel(context.Background())
+	var output synchronizedBuffer
+	result := make(chan int, 1)
+
+	go func() {
+		result <- runCommand(
+			ctx,
+			[]string{"prepare-commits", "--change", "selected-change"},
+			fixture.workingRoot,
+			&output,
+			fixture.dependencies(),
+		)
+	}()
+
+	fixture.events.waitFor(t, "notify:deliver")
+	select {
+	case code := <-result:
+		t.Fatalf("команда прекратила сопровождение переданной сессии с кодом %d: %s", code, output.String())
+	default:
+	}
+	cancel()
+
+	select {
+	case code := <-result:
+		if code != exitObstacle {
+			t.Fatalf("ожидался код отменённого сопровождения 1, получен %d", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("команда не завершилась после отмены")
+	}
+	if fixture.paseo.createdSessions != 0 {
+		t.Fatalf("сопровождение существующей сессии создало замену: %v", fixture.events.snapshot())
 	}
 }
 
@@ -123,15 +175,21 @@ func TestPrepareCommitsСообщаетФактическийЗапросРаз�
 	fixture.paseo.sessionID = "session-permission"
 	fixture.paseo.sessionStatus = "idle"
 	fixture.paseo.attentionReason = "permission"
-	var output bytes.Buffer
-
-	code := runCommand(
-		context.Background(),
-		[]string{"prepare-commits", "--change", "selected-change"},
-		fixture.workingRoot,
-		&output,
-		fixture.dependencies(),
-	)
+	ctx, cancel := context.WithCancel(context.Background())
+	var output synchronizedBuffer
+	result := make(chan int, 1)
+	go func() {
+		result <- runCommand(
+			ctx,
+			[]string{"prepare-commits", "--change", "selected-change"},
+			fixture.workingRoot,
+			&output,
+			fixture.dependencies(),
+		)
+	}()
+	output.waitForCount(t, "Paseo запросил разрешение", 1)
+	cancel()
+	code := <-result
 
 	if code != exitObstacle {
 		t.Fatalf("ожидался код препятствия 1, получен %d", code)
@@ -213,6 +271,138 @@ func TestPrepareCommitsСоздаётСессиюТолькоПослеПров�
 		strings.Contains(output.String(), "Восстановлена собственная сессия session-created") ||
 		strings.Contains(output.String(), prompts.CommitPreparation().Text()) {
 		t.Fatalf("вывод не различает создание либо раскрыл промпт: %s", output.String())
+	}
+}
+
+func TestPrepareCommitsРазрешаетСтандартныйКаналДоПервойМутации(t *testing.T) {
+	fixture := newCommandFixture(t, orchestrator.DirtyWorkingTree{})
+	writeCommandConfiguration(t, fixture.workingRoot, "")
+	fixture.paseo.waitError = context.Canceled
+	var output bytes.Buffer
+
+	code := runCommand(
+		context.Background(),
+		[]string{"prepare-commits", "--change", "selected-change"},
+		fixture.workingRoot,
+		&output,
+		fixture.dependencies(),
+	)
+
+	if code != exitObstacle {
+		t.Fatalf("ожидалась остановка сопровождения с кодом 1, получен %d", code)
+	}
+	if fixture.snapshotReads != 1 || fixture.deliveryBuilds != 1 || fixture.deliverer == nil {
+		t.Fatalf("ожидались один снимок и один адаптер: reads=%d builds=%d", fixture.snapshotReads, fixture.deliveryBuilds)
+	}
+	if got := fixture.deliverer.channel.Priority(); got != config.NtfyPriorityDefault {
+		t.Fatalf("ожидался стандартный приоритет %q, получен %q", config.NtfyPriorityDefault, got)
+	}
+	events := fixture.events.snapshot()
+	assertEventOrder(t, events, "git:read", "config:intervention:view")
+	assertEventOrder(t, events, "config:intervention:view", "notify:build")
+	assertEventOrder(t, events, "notify:build", "paseo:workspace:create")
+}
+
+func TestPrepareCommitsПовторяетДоставкуТемЖеАдаптеромИСнимком(t *testing.T) {
+	fixture := newCommandFixture(t, orchestrator.DirtyWorkingTree{})
+	fixture.paseo.workspaceExists = true
+	fixture.paseo.sessionID = "session-existing"
+	fixture.paseo.sessionStatus = "idle"
+	fixture.paseo.attentionReason = "finished"
+	fixture.deliveryFailures = 2
+	fixture.onDelivery = func(attempt int, _ notify.Intervention) {
+		if attempt == 1 {
+			writeCommandConfiguration(t, fixture.workingRoot, "min")
+		}
+		if attempt == 2 {
+			fixture.paseo.sessionStatus = "closed"
+			fixture.paseo.attentionReason = ""
+			fixture.repository.state = orchestrator.CleanWorkingTree{}
+		}
+	}
+	fixture.interventionClock.tick()
+	fixture.interventionClock.tick()
+	var output bytes.Buffer
+
+	code := runCommand(
+		context.Background(),
+		[]string{"prepare-commits", "--change", "selected-change"},
+		fixture.workingRoot,
+		&output,
+		fixture.dependencies(),
+	)
+
+	if code != exitSuccess {
+		t.Fatalf("ожидался успех после ручного закрытия с чистым Git, получен %d: %s", code, output.String())
+	}
+	if fixture.snapshotReads != 1 || fixture.deliveryBuilds != 1 || fixture.deliverer == nil {
+		t.Fatalf("повтор создал новый снимок или адаптер: reads=%d builds=%d", fixture.snapshotReads, fixture.deliveryBuilds)
+	}
+	records := fixture.deliverer.snapshot()
+	if len(records) != 2 || records[0] != records[1] {
+		t.Fatalf("повторы изменили пользовательское представление: %v", records)
+	}
+	if records[0].priority != config.NtfyPriorityHigh {
+		t.Fatalf("изменение файла подменило приоритет текущего запуска: %q", records[0].priority)
+	}
+	if fixture.paseo.createdSessions != 0 {
+		t.Fatalf("ошибка доставки создала нового агента: %v", fixture.events.snapshot())
+	}
+}
+
+func TestPrepareCommitsРучноеЗакрытиеОпределяетКодПоСвежемуGit(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		finalGit   orchestrator.WorkingTreeObservation
+		wantCode   int
+		newAttempt bool
+	}{
+		{name: "чистый Git завершает поручение", finalGit: orchestrator.CleanWorkingTree{}, wantCode: exitSuccess},
+		{name: "грязный Git завершает попытку и разрешает следующую", finalGit: orchestrator.DirtyWorkingTree{}, wantCode: exitObstacle, newAttempt: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newCommandFixture(t, orchestrator.DirtyWorkingTree{})
+			fixture.paseo.workspaceExists = true
+			fixture.paseo.sessionID = "session-existing"
+			fixture.paseo.sessionStatus = "idle"
+			fixture.paseo.attentionReason = "finished"
+			fixture.onDelivery = func(_ int, _ notify.Intervention) {
+				fixture.paseo.sessionStatus = "closed"
+				fixture.paseo.attentionReason = ""
+				fixture.repository.state = tt.finalGit
+			}
+			fixture.interventionClock.tick()
+			var output bytes.Buffer
+
+			code := runCommand(
+				context.Background(),
+				[]string{"prepare-commits", "--change", "selected-change"},
+				fixture.workingRoot,
+				&output,
+				fixture.dependencies(),
+			)
+
+			if code != tt.wantCode {
+				t.Fatalf("ожидался код %d, получен %d: %s", tt.wantCode, code, output.String())
+			}
+			if !tt.newAttempt {
+				return
+			}
+
+			fixture.onDelivery = nil
+			fixture.paseo.waitError = context.Canceled
+			output.Reset()
+			code = runCommand(
+				context.Background(),
+				[]string{"prepare-commits", "--change", "selected-change"},
+				fixture.workingRoot,
+				&output,
+				fixture.dependencies(),
+			)
+			if code != exitObstacle || fixture.paseo.createdSessions != 1 {
+				t.Fatalf("следующий запуск не создал ровно одну новую попытку: code=%d sessions=%d events=%v", code, fixture.paseo.createdSessions, fixture.events.snapshot())
+			}
+		})
 	}
 }
 
@@ -376,17 +566,24 @@ func TestСигналыВозвращаютСтандартныйКодИОтм�
 }
 
 type commandFixture struct {
-	t               *testing.T
-	workingRoot     string
-	planningHome    string
-	changeRoot      string
-	events          *eventRecorder
-	repository      *fakeRepository
-	paseo           *fakePaseoRuntime
-	clock           waitClock
-	resolveError    error
-	loadInputsError error
-	inputsLoaded    int
+	t                 *testing.T
+	workingRoot       string
+	planningHome      string
+	changeRoot        string
+	events            *eventRecorder
+	repository        *fakeRepository
+	paseo             *fakePaseoRuntime
+	clock             waitClock
+	interventionClock *manualInterventionClock
+	resolveError      error
+	loadInputsError   error
+	channelError      error
+	snapshotReads     int
+	inputsLoaded      int
+	deliveryBuilds    int
+	deliverer         *fakeInterventionDeliverer
+	deliveryFailures  int
+	onDelivery        func(int, notify.Intervention)
 }
 
 func newCommandFixture(t *testing.T, git orchestrator.WorkingTreeObservation) *commandFixture {
@@ -398,15 +595,17 @@ func newCommandFixture(t *testing.T, git orchestrator.WorkingTreeObservation) *c
 		t.Fatalf("создать корень change: %v", err)
 	}
 	events := newEventRecorder()
+	writeCommandConfiguration(t, workingRoot, "high")
 	return &commandFixture{
-		t:            t,
-		workingRoot:  workingRoot,
-		planningHome: planningHome,
-		changeRoot:   changeRoot,
-		events:       events,
-		repository:   &fakeRepository{root: workingRoot, state: git, events: events},
-		paseo:        &fakePaseoRuntime{serverID: "server-1", events: events},
-		clock:        newManualWaitClock(),
+		t:                 t,
+		workingRoot:       workingRoot,
+		planningHome:      planningHome,
+		changeRoot:        changeRoot,
+		events:            events,
+		repository:        &fakeRepository{root: workingRoot, state: git, events: events},
+		paseo:             &fakePaseoRuntime{serverID: "server-1", events: events},
+		clock:             newManualWaitClock(),
+		interventionClock: newManualInterventionClock(),
 	}
 }
 
@@ -435,20 +634,124 @@ func (fixture *commandFixture) dependencies() commandDependencies {
 			fixture.events.add("paseo:check")
 			return fixture.paseo, nil
 		},
-		loadNewSessionInputs: func(ctx context.Context, root string, runtime paseoRuntime) (newSessionInputs, error) {
-			fixture.inputsLoaded++
+		readConfiguration: func(root string) (configurationSnapshot, error) {
+			fixture.snapshotReads++
 			fixture.events.add("config:read")
 			if root != fixture.workingRoot {
-				return newSessionInputs{}, errors.New("конфигурация прочитана не из корня рабочего дерева")
+				return nil, errors.New("конфигурация прочитана не из корня рабочего дерева")
 			}
+			configurationRoot, err := config.NewRepositoryRoot(root)
+			if err != nil {
+				return nil, err
+			}
+			return &recordingConfigurationSnapshot{
+				fixture:  fixture,
+				snapshot: config.ReadSnapshot(configurationRoot),
+			}, nil
+		},
+		loadNewSessionInputs: func(ctx context.Context, snapshot configurationSnapshot, runtime paseoRuntime) (newSessionInputs, error) {
+			fixture.inputsLoaded++
+			fixture.events.add("config:session:view")
 			if fixture.loadInputsError != nil {
 				return newSessionInputs{}, fixture.loadInputsError
 			}
-			fixture.events.add("catalog:read")
-			return newSessionInputs{prompt: prompts.CommitPreparation()}, nil
+			settings, err := snapshot.CommitPreparation()
+			if err != nil {
+				return newSessionInputs{}, err
+			}
+			verified, err := runtime.VerifySessionSettings(ctx, settings)
+			if err != nil {
+				return newSessionInputs{}, err
+			}
+			return newSessionInputs{settings: verified, prompt: prompts.CommitPreparation()}, nil
 		},
-		clock: fixture.clock,
+		newInterventionDelivery: func(channel config.InterventionChannel) (notify.Deliverer, error) {
+			fixture.deliveryBuilds++
+			fixture.events.add("notify:build")
+			fixture.deliverer = &fakeInterventionDeliverer{
+				channel:    channel,
+				events:     fixture.events,
+				failures:   fixture.deliveryFailures,
+				onDelivery: fixture.onDelivery,
+			}
+			return fixture.deliverer, nil
+		},
+		waitClock:         fixture.clock,
+		interventionClock: fixture.interventionClock,
 	}
+}
+
+func writeCommandConfiguration(t *testing.T, root, priority string) {
+	t.Helper()
+	priorityField := ""
+	if priority != "" {
+		priorityField = `, "priority": "` + priority + `"`
+	}
+	document := `{
+		"version": 1,
+		"sessions": {"commit-preparation": {"provider": "codex", "model": "gpt-5", "reasoning": "high"}},
+		"notifications": {"intervention": {"type": "ntfy", "url": "https://notify.example/topic"` + priorityField + `}}
+	}`
+	if err := os.WriteFile(filepath.Join(root, config.FileName), []byte(document), 0o600); err != nil {
+		t.Fatalf("записать конфигурацию: %v", err)
+	}
+}
+
+type recordingConfigurationSnapshot struct {
+	fixture  *commandFixture
+	snapshot config.Snapshot
+}
+
+func (snapshot *recordingConfigurationSnapshot) CommitPreparation() (config.UntrustedAgentSettings, error) {
+	return snapshot.snapshot.CommitPreparation()
+}
+
+func (snapshot *recordingConfigurationSnapshot) InterventionChannel() (config.InterventionChannel, error) {
+	snapshot.fixture.events.add("config:intervention:view")
+	if snapshot.fixture.channelError != nil {
+		return config.InterventionChannel{}, snapshot.fixture.channelError
+	}
+	return snapshot.snapshot.InterventionChannel()
+}
+
+type fakeInterventionDeliverer struct {
+	channel    config.InterventionChannel
+	events     *eventRecorder
+	deliveries int
+	failures   int
+	onDelivery func(int, notify.Intervention)
+	records    []deliveredIntervention
+}
+
+func (delivery *fakeInterventionDeliverer) Deliver(_ context.Context, event notify.Intervention) *notify.DeliveryError {
+	delivery.deliveries++
+	delivery.records = append(delivery.records, deliveredIntervention{
+		change:    event.Change(),
+		message:   event.Message(),
+		sessionID: event.SessionID().String(),
+		link:      event.SessionLink().String(),
+		priority:  delivery.channel.Priority(),
+	})
+	delivery.events.add("notify:deliver")
+	if delivery.onDelivery != nil {
+		delivery.onDelivery(delivery.deliveries, event)
+	}
+	if delivery.deliveries <= delivery.failures {
+		return notify.NewDeliveryError()
+	}
+	return nil
+}
+
+func (delivery *fakeInterventionDeliverer) snapshot() []deliveredIntervention {
+	return append([]deliveredIntervention(nil), delivery.records...)
+}
+
+type deliveredIntervention struct {
+	change    string
+	message   string
+	sessionID string
+	link      string
+	priority  config.NtfyPriority
 }
 
 type fakeChangeSource struct {
@@ -502,7 +805,7 @@ func (runtime *fakePaseoRuntime) ServerID() string {
 }
 
 func (runtime *fakePaseoRuntime) SessionLink(session orchestrator.SessionID) string {
-	return "ссылка-сессии:" + session.String()
+	return "paseo://h/" + runtime.serverID + "/agent/" + session.String()
 }
 
 func (runtime *fakePaseoRuntime) FindActiveWorkspace(_ context.Context, _ orchestrator.ChangeKey, _ string) (orchestrator.ManagedWorkspaceObservation, error) {
@@ -515,6 +818,9 @@ func (runtime *fakePaseoRuntime) FindActiveWorkspace(_ context.Context, _ orches
 
 func (runtime *fakePaseoRuntime) FindOwnSessions(_ context.Context, change orchestrator.ChangeKey, workspace orchestrator.WorkspaceID, _ string) (orchestrator.OwnSessionObservation, error) {
 	runtime.events.add("paseo:sessions:read")
+	if runtime.sessionStatus == "closed" {
+		return orchestrator.NoActiveOwnSession{}, nil
+	}
 	return runtime.sessionObservation(change, workspace)
 }
 
@@ -535,6 +841,7 @@ func (runtime *fakePaseoRuntime) CreateOwnSession(_ context.Context, _ orchestra
 	runtime.createdSessions++
 	runtime.sessionID = "session-created"
 	runtime.sessionStatus = "running"
+	runtime.attentionReason = ""
 	id, _ := orchestrator.NewSessionID(runtime.sessionID)
 	return id, nil
 }
@@ -621,6 +928,27 @@ func (ticker manualWaitTicker) C() <-chan time.Time {
 }
 
 func (manualWaitTicker) Stop() {}
+
+type manualInterventionClock struct {
+	ticks chan struct{}
+}
+
+func newManualInterventionClock() *manualInterventionClock {
+	return &manualInterventionClock{ticks: make(chan struct{}, 8)}
+}
+
+func (clock *manualInterventionClock) Pause(ctx context.Context, _ time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-clock.ticks:
+		return nil
+	}
+}
+
+func (clock *manualInterventionClock) tick() {
+	clock.ticks <- struct{}{}
+}
 
 type eventRecorder struct {
 	mu      sync.Mutex

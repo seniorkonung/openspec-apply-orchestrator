@@ -8,6 +8,7 @@ import (
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/config"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/gitstate"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/notify"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/openspec"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/ownership"
@@ -17,12 +18,15 @@ import (
 
 func productionCommandDependencies() commandDependencies {
 	return commandDependencies{
-		newChangeSource:      newProductionChangeSource,
-		openRepository:       openProductionRepository,
-		acquireChangeLock:    acquireProductionChangeLock,
-		openPaseo:            openProductionPaseo,
-		loadNewSessionInputs: loadProductionNewSessionInputs,
-		clock:                systemWaitClock{},
+		newChangeSource:         newProductionChangeSource,
+		openRepository:          openProductionRepository,
+		acquireChangeLock:       acquireProductionChangeLock,
+		openPaseo:               openProductionPaseo,
+		readConfiguration:       readProductionConfiguration,
+		loadNewSessionInputs:    loadProductionNewSessionInputs,
+		newInterventionDelivery: notify.NewNtfy,
+		waitClock:               systemWaitClock{},
+		interventionClock:       systemInterventionClock{},
 	}
 }
 
@@ -97,20 +101,20 @@ func openProductionPaseo(ctx context.Context) (paseoRuntime, error) {
 	return paseo.NewRuntime(ctx)
 }
 
-func loadProductionNewSessionInputs(ctx context.Context, root string, runtime paseoRuntime) (newSessionInputs, error) {
+func readProductionConfiguration(root string) (configurationSnapshot, error) {
 	configurationRoot, err := config.NewRepositoryRoot(root)
 	if err != nil {
-		return newSessionInputs{}, err
+		return nil, err
 	}
-	configuration, err := config.Read(configurationRoot)
+	return config.ReadSnapshot(configurationRoot), nil
+}
+
+func loadProductionNewSessionInputs(ctx context.Context, snapshot configurationSnapshot, runtime paseoRuntime) (newSessionInputs, error) {
+	settingsConfiguration, err := snapshot.CommitPreparation()
 	if err != nil {
 		return newSessionInputs{}, err
 	}
-	channel := configuration.InterventionChannel()
-	if channel.Type() == "" || channel.URL() == "" {
-		return newSessionInputs{}, &config.FieldError{Path: "notifications.intervention", Kind: config.ErrMissingField}
-	}
-	settings, err := runtime.VerifySessionSettings(ctx, configuration.CommitPreparation())
+	settings, err := runtime.VerifySessionSettings(ctx, settingsConfiguration)
 	if err != nil {
 		return newSessionInputs{}, err
 	}
@@ -133,4 +137,17 @@ func (ticker systemWaitTicker) C() <-chan time.Time {
 
 func (ticker systemWaitTicker) Stop() {
 	ticker.ticker.Stop()
+}
+
+type systemInterventionClock struct{}
+
+func (systemInterventionClock) Pause(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/notify"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
 )
 
@@ -15,7 +16,9 @@ type commandGateway struct {
 	changeSource         changeSource
 	repository           workingTreeRepository
 	paseo                paseoRuntime
-	loadNewSessionInputs func(context.Context, string, paseoRuntime) (newSessionInputs, error)
+	configuration        configurationSnapshot
+	loadNewSessionInputs func(context.Context, configurationSnapshot, paseoRuntime) (newSessionInputs, error)
+	delivery             *snapshotInterventionDelivery
 	clock                waitClock
 	output               io.Writer
 	reportedSessions     map[string]struct{}
@@ -70,7 +73,10 @@ func (gateway *commandGateway) ReadWorkingTree(ctx context.Context, cwd string) 
 
 func (gateway *commandGateway) PrepareNewSession(ctx context.Context, _ orchestrator.ChangeKey, _ string) (orchestrator.PreparedSessionCreation, error) {
 	fmt.Fprintln(gateway.output, "Проверяю конфигурацию и каталог новой сессии.")
-	inputs, err := gateway.loadNewSessionInputs(ctx, gateway.repository.Root(), gateway.paseo)
+	if err := gateway.delivery.Resolve(); err != nil {
+		return orchestrator.PreparedSessionCreation{}, err
+	}
+	inputs, err := gateway.loadNewSessionInputs(ctx, gateway.configuration, gateway.paseo)
 	if err != nil {
 		return orchestrator.PreparedSessionCreation{}, err
 	}
@@ -95,6 +101,10 @@ func (gateway *commandGateway) PrepareNewSession(ctx context.Context, _ orchestr
 		}
 		return created, err
 	}), nil
+}
+
+func (gateway *commandGateway) knownInterventionSession(session orchestrator.SessionID) (notify.KnownSession, error) {
+	return notify.NewKnownSession(session.String(), gateway.paseo.SessionLink(session))
 }
 
 func (gateway *commandGateway) CreateWorkspace(ctx context.Context, change orchestrator.ChangeKey, cwd string) error {
@@ -146,3 +156,70 @@ func (gateway *commandGateway) reportRecoveredSession(observation orchestrator.O
 	gateway.reportedSessions[id.String()] = struct{}{}
 	fmt.Fprintf(gateway.output, "Восстановлена собственная сессия %s.\n", id.String())
 }
+
+type snapshotInterventionDelivery struct {
+	snapshot configurationSnapshot
+	build    interventionDeliveryFactory
+	output   io.Writer
+	resolved bool
+	delivery notify.Deliverer
+	err      error
+}
+
+func newSnapshotInterventionDelivery(
+	snapshot configurationSnapshot,
+	build interventionDeliveryFactory,
+	output io.Writer,
+) (*snapshotInterventionDelivery, error) {
+	if snapshot == nil || build == nil || output == nil {
+		return nil, errors.New("некорректная конфигурация доставки уведомлений")
+	}
+	return &snapshotInterventionDelivery{snapshot: snapshot, build: build, output: output}, nil
+}
+
+func (delivery *snapshotInterventionDelivery) Resolve() error {
+	if delivery.resolved {
+		return delivery.err
+	}
+	delivery.resolved = true
+	channel, err := delivery.snapshot.InterventionChannel()
+	if err == nil {
+		delivery.delivery, err = delivery.build(channel)
+		if err == nil && delivery.delivery == nil {
+			err = errors.New("адаптер уведомлений не создан")
+		}
+	}
+	delivery.err = err
+	return delivery.err
+}
+
+func (delivery *snapshotInterventionDelivery) Deliver(
+	ctx context.Context,
+	event notify.Intervention,
+) *notify.DeliveryError {
+	if delivery == nil || ctx == nil || event == nil {
+		return notify.NewDeliveryError()
+	}
+	fmt.Fprintf(
+		delivery.output,
+		"Требуется участие человека: %s. Сессия: %s\n",
+		interventionReason(event.Reason()),
+		event.SessionLink().String(),
+	)
+	if err := delivery.Resolve(); err != nil {
+		fmt.Fprintf(
+			delivery.output,
+			"Уведомление не доставлено: %v. Исправьте конфигурацию и перезапустите CLI; сопровождение той же сессии продолжается.\n",
+			err,
+		)
+		return notify.NewDeliveryError()
+	}
+	if err := delivery.delivery.Deliver(ctx, event); err != nil {
+		fmt.Fprintln(delivery.output, "Уведомление не доставлено; сопровождение той же сессии продолжается.")
+		return err
+	}
+	fmt.Fprintln(delivery.output, "Уведомление доставлено; сопровождение той же сессии продолжается.")
+	return nil
+}
+
+var _ notify.Deliverer = (*snapshotInterventionDelivery)(nil)
