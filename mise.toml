@@ -9,3 +9,7 @@ lefthook = "2"
 
 [tasks]
 prepare = "lefthook install"
+
+[tasks.test-paseo-scenarios]
+description = "Запустить последовательный каталог production-сценариев Paseo"
+run = "go test -p=1 -parallel=1 -count=1 -timeout=20m -tags=paseo_integration -run '^TestProduction' ./cmd/openspec-apply-orchestrator"

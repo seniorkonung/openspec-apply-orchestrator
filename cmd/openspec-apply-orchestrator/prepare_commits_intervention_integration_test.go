@@ -19,7 +19,6 @@ import (
 )
 
 func TestProductionКомандаПродолжаетТуЖеСессиюПослеУведомления(t *testing.T) {
-	t.Parallel()
 	harness := startProductionHarness(t)
 	harness.EnableCommandRecording(t)
 	prepareProductionRepository(t, harness.Workspace())
@@ -81,7 +80,6 @@ func TestProductionКомандаПродолжаетТуЖеСессиюПос�
 }
 
 func TestProductionКомандаСоздаётНовуюПопыткуПослеЗакрытияСГрязнымGit(t *testing.T) {
-	t.Parallel()
 	harness := startProductionHarness(t)
 	harness.EnableCommandRecording(t)
 	prepareProductionRepository(t, harness.Workspace())

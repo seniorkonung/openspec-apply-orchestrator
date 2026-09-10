@@ -21,14 +21,47 @@ import (
 
 const productionIntegrationChange = "integration-commit-preparation"
 
-const productionIntegrationParallelism = 4
-
 const productionIntegrationEventTimeout = 90 * time.Second
 
-var productionIntegrationSlots = make(chan struct{}, productionIntegrationParallelism)
+var productionIntegrationBinary string
+
+func TestMain(m *testing.M) {
+	temporaryRoot, err := os.MkdirTemp("", "oa-production-scenarios-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "создать каталог сборки production-бинарника: %v\n", err)
+		os.Exit(1)
+	}
+
+	moduleRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "определить корень Go-модуля: %v\n", err)
+		_ = os.RemoveAll(temporaryRoot)
+		os.Exit(1)
+	}
+	productionIntegrationBinary = filepath.Join(temporaryRoot, "openspec-apply-orchestrator")
+	command := exec.Command(
+		"go", "build", "-tags=paseo_integration",
+		"-o", productionIntegrationBinary,
+		"./cmd/openspec-apply-orchestrator",
+	)
+	command.Dir = moduleRoot
+	if output, buildErr := command.CombinedOutput(); buildErr != nil {
+		fmt.Fprintf(os.Stderr, "собрать production-бинарник: %v\n%s", buildErr, output)
+		_ = os.RemoveAll(temporaryRoot)
+		os.Exit(1)
+	}
+
+	exitCode := m.Run()
+	if removeErr := os.RemoveAll(temporaryRoot); removeErr != nil {
+		fmt.Fprintf(os.Stderr, "удалить каталог сборки production-бинарника: %v\n", removeErr)
+		if exitCode == 0 {
+			exitCode = 1
+		}
+	}
+	os.Exit(exitCode)
+}
 
 func TestProductionКомандаПодготавливаетВсеВидыИзмененийЧерезРеальныеПроцессы(t *testing.T) {
-	t.Parallel()
 	harness := startProductionHarness(t)
 	harness.EnableCommandRecording(t)
 	prepareProductionRepository(t, harness.Workspace())
@@ -78,7 +111,6 @@ func TestProductionКомандаПодготавливаетВсеВидыИз�
 }
 
 func TestProductionКомандаВосстанавливаетСессиюПослеПрерыванияИКоммита(t *testing.T) {
-	t.Parallel()
 	harness := startProductionHarness(t)
 	harness.EnableCommandRecording(t)
 	prepareProductionRepository(t, harness.Workspace())
@@ -157,7 +189,6 @@ func TestProductionКомандаВосстанавливаетСессиюПо�
 }
 
 func TestProductionКомандаВосстанавливаетТуЖеСессиюПослеПерезапускаDaemon(t *testing.T) {
-	t.Parallel()
 	harness := startProductionHarness(t)
 	harness.EnableCommandRecording(t)
 	prepareProductionRepository(t, harness.Workspace())
@@ -208,7 +239,6 @@ func TestProductionКомандаВосстанавливаетТуЖеСесс�
 }
 
 func TestProductionКомандаВосстанавливаетСессиюПослеНеопределённогоRun(t *testing.T) {
-	t.Parallel()
 	harness := startProductionHarness(t)
 	harness.EnableCommandRecording(t)
 	harness.InterceptRunOutput(t)
@@ -312,8 +342,6 @@ type productionCommandProcess struct {
 
 func startProductionHarness(t *testing.T) *testpaseo.Harness {
 	t.Helper()
-	productionIntegrationSlots <- struct{}{}
-	t.Cleanup(func() { <-productionIntegrationSlots })
 	return testpaseo.StartIsolated(t)
 }
 
@@ -646,19 +674,10 @@ func writeIntegrationFile(t *testing.T, path, content string) {
 
 func buildProductionCommand(t *testing.T) string {
 	t.Helper()
-	root := integrationModuleRoot(t)
-	binary := filepath.Join(t.TempDir(), "openspec-apply-orchestrator")
-	runTool(t, root, "go", "build", "-tags=paseo_integration", "-o", binary, "./cmd/openspec-apply-orchestrator")
-	return binary
-}
-
-func integrationModuleRoot(t *testing.T) string {
-	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("определить корень модуля: %v", err)
+	if productionIntegrationBinary == "" {
+		t.Fatal("production-бинарник не собран общим стендом")
 	}
-	return root
+	return productionIntegrationBinary
 }
 
 func runTool(t *testing.T, directory, name string, arguments ...string) {

@@ -19,7 +19,6 @@ import (
 )
 
 func TestProductionКомандаСохраняетПолитикуПовтораИПрименяетНовыйСнимокПослеПерезапуска(t *testing.T) {
-	t.Parallel()
 	scenario := startRecoverableDeliveryScenario(t)
 	failing := startDeliveryProbe(t, false, func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusServiceUnavailable)

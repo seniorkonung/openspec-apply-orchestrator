@@ -105,11 +105,12 @@ go test -p=1 -parallel=1 -count=1 -tags=paseo_integration \
   ./internal/paseo
 ```
 
-Текущий каталог production-историй запускается последовательно:
+Текущий каталог production-историй запускается последовательно единой
+командой, которая один раз собирает production-бинарник и не запускает
+технические проверки нижних уровней:
 
 ```sh
-go test -p=1 -parallel=1 -count=1 -tags=paseo_integration \
-  ./cmd/openspec-apply-orchestrator
+mise run test-paseo-scenarios
 ```
 
 Требования к установленному Paseo и изоляции daemon описаны в
