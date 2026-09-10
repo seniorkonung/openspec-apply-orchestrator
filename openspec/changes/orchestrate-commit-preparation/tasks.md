@@ -468,7 +468,7 @@
   - **Files likely touched:** `cmd/openspec-apply-orchestrator/main.go`, `cmd/openspec-apply-orchestrator/prepare_commits.go`, `cmd/openspec-apply-orchestrator/gateway.go`, `cmd/openspec-apply-orchestrator/reporting.go`, `cmd/openspec-apply-orchestrator/prepare_commits_test.go`.
   - **Estimated scope:** M.
 
-- [ ] 3.8 Подтвердить production-контур перед сквозной приёмкой
+- [x] 3.8 Подтвердить production-контур перед сквозной приёмкой
   - **Acceptance criteria:**
     - Production-команда использует один снимок запуска, сохраняет разрешённый канал до мутаций нового поручения, при восстановлении получает его из того же снимка только по потребности и сопровождает сессию до закрытия в обычном и подробном выводе.
     - Модульные, race- и статические проверки подтверждают точные `Title`, body, `Click` и `Priority`, ограниченные повторы, отсутствие ID сессии в пользовательском payload, отсутствие уведомления при запуске агента и неизменном успешном ожидании и отсутствие транспортных деталей в ядре.
