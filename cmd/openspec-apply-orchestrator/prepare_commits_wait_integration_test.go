@@ -12,30 +12,32 @@ import (
 
 func waitForRecordedCommandEvent(
 	t *testing.T,
-	harness *testpaseo.Harness,
+	scenario *productionScenario,
 	phase testpaseo.CommandPhase,
 	name string,
 ) {
 	t.Helper()
-	deadline := time.Now().Add(productionIntegrationEventTimeout)
+	deadline := productionEventDeadline(t, scenario)
 	for time.Now().Before(deadline) {
-		if commandEventIndex(harness.RecordedCommandEvents(t), phase, name, 0) >= 0 {
+		if commandEventIndex(scenario.harness.RecordedCommandEvents(t), phase, name, 0) >= 0 {
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	t.Fatalf("не дождаться события %q команды %q: %#v", phase, name, harness.RecordedCommandEvents(t))
+	assertProductionScenarioActive(t, scenario)
+	t.Fatalf("не дождаться события %q команды %q: %#v", phase, name, scenario.harness.RecordedCommandEvents(t))
 }
 
-func waitForOutput(t *testing.T, output *synchronizedBuffer, fragment string) {
+func waitForOutput(t *testing.T, scenario *productionScenario, output *synchronizedBuffer, fragment string) {
 	t.Helper()
-	deadline := time.Now().Add(productionIntegrationEventTimeout)
+	deadline := productionEventDeadline(t, scenario)
 	for time.Now().Before(deadline) {
 		if strings.Contains(output.String(), fragment) {
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
+	assertProductionScenarioActive(t, scenario)
 	t.Fatalf("не дождаться фрагмента %q в выводе:\n%s", fragment, output.String())
 }
 

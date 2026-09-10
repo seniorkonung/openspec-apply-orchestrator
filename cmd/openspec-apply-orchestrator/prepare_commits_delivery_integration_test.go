@@ -18,12 +18,12 @@ import (
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/testpaseo"
 )
 
-func TestProductionКомандаСохраняетПолитикуПовтораИПрименяетНовыйСнимокПослеПерезапуска(t *testing.T) {
+func TestProductionПользовательПослеСбояДоставкиПродолжаетТоЖеПоручение(t *testing.T) {
 	scenario := startRecoverableDeliveryScenario(t)
-	failing := startDeliveryProbe(t, false, func(writer http.ResponseWriter, _ *http.Request) {
+	failing := startDeliveryProbe(t, scenario.productionScenario, false, func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusServiceUnavailable)
 	})
-	recovered := startDeliveryProbe(t, false, nil)
+	recovered := startDeliveryProbe(t, scenario.productionScenario, false, nil)
 	const (
 		originalTokenEnvironment = "OA_INTEGRATION_NTFY_TOKEN_ORIGINAL_3_10"
 		originalToken            = "original-integration-token-3-10"
@@ -51,8 +51,7 @@ func TestProductionКомандаСохраняетПолитикуПовтор�
 
 	firstProcess := startProductionCommandWithEnvironment(
 		t,
-		scenario.binary,
-		scenario.harness,
+		scenario.productionScenario,
 		environment,
 	)
 	first := failing.WaitRequest(t)
@@ -88,7 +87,7 @@ func TestProductionКомандаСохраняетПолитикуПовтор�
 		t.Fatalf("повтор изменил пользовательские поля: первая=%#v повтор=%#v", first, second)
 	}
 	recovered.AssertNoRequest(t)
-	waitForOutputCount(t, &firstProcess.output, "Уведомление не доставлено", 2)
+	waitForOutputCount(t, scenario.productionScenario, &firstProcess.output, "Уведомление не доставлено", 2)
 	if err := firstProcess.command.Process.Signal(os.Interrupt); err != nil {
 		t.Fatalf("прервать процесс после подтверждённого повтора: %v", err)
 	}
@@ -110,8 +109,7 @@ func TestProductionКомандаСохраняетПолитикуПовтор�
 	scenario.harness.ResetCommandRecording(t)
 	secondProcess := startProductionCommandWithEnvironment(
 		t,
-		scenario.binary,
-		scenario.harness,
+		scenario.productionScenario,
 		environment,
 	)
 	afterRestart := recovered.WaitRequest(t)
@@ -124,7 +122,7 @@ func TestProductionКомандаСохраняетПолитикуПовтор�
 		t.Fatalf("новый процесс не применил новый Authorization: %q", afterRestart.authorization)
 	}
 	failing.AssertNoRequest(t)
-	waitForOutput(t, &secondProcess.output, "Уведомление доставлено")
+	waitForOutput(t, scenario.productionScenario, &secondProcess.output, "Уведомление доставлено")
 	inspections := countCommandEvents(
 		scenario.harness.RecordedCommandEvents(t),
 		testpaseo.CommandStarted,
@@ -132,7 +130,7 @@ func TestProductionКомандаСохраняетПолитикуПовтор�
 	)
 	waitForRecordedCommandEventCount(
 		t,
-		scenario.harness,
+		scenario.productionScenario,
 		testpaseo.CommandStarted,
 		"inspect",
 		inspections+1,
@@ -162,18 +160,20 @@ func TestProductionКомандаСохраняетПолитикуПовтор�
 
 func waitForOutputCount(
 	t *testing.T,
+	scenario *productionScenario,
 	output *synchronizedBuffer,
 	fragment string,
 	want int,
 ) {
 	t.Helper()
-	deadline := time.Now().Add(productionIntegrationEventTimeout)
+	deadline := productionEventDeadline(t, scenario)
 	for time.Now().Before(deadline) {
 		if strings.Count(output.String(), fragment) >= want {
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
+	assertProductionScenarioActive(t, scenario)
 	t.Fatalf(
 		"не дождаться %d вхождений %q в выводе:\n%s",
 		want,
@@ -200,17 +200,22 @@ type deliveryCapturedRequest struct {
 }
 
 type deliveryProbe struct {
+	scenario *productionScenario
 	server   *httptest.Server
 	requests chan deliveryCapturedRequest
 }
 
 func startDeliveryProbe(
 	t *testing.T,
+	scenario *productionScenario,
 	useTLS bool,
 	respond func(http.ResponseWriter, *http.Request),
 ) *deliveryProbe {
 	t.Helper()
-	probe := &deliveryProbe{requests: make(chan deliveryCapturedRequest, 16)}
+	probe := &deliveryProbe{
+		scenario: scenario,
+		requests: make(chan deliveryCapturedRequest, 16),
+	}
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		probe.requests <- deliveryCapturedRequest{
 			notification: capturedIntegrationNtfyRequest{
@@ -252,6 +257,9 @@ func (probe *deliveryProbe) WaitRequest(t *testing.T) deliveryCapturedRequest {
 	select {
 	case request := <-probe.requests:
 		return request
+	case <-probe.scenario.context.Done():
+		t.Fatalf("истёк deadline пользовательского сценария: %v", probe.scenario.context.Err())
+		return deliveryCapturedRequest{}
 	case <-time.After(productionIntegrationEventTimeout):
 		t.Fatal("не дождаться сквозного запроса доставки ntfy")
 		return deliveryCapturedRequest{}
@@ -279,20 +287,20 @@ func readDeliveryRequestBody(t *testing.T, request *http.Request) string {
 
 func startProductionCommandWithEnvironment(
 	t *testing.T,
-	binary string,
-	harness *testpaseo.Harness,
+	scenario *productionScenario,
 	environment []string,
 ) *productionCommandProcess {
 	t.Helper()
-	command := exec.Command(
-		binary,
+	command := exec.CommandContext(
+		scenario.context,
+		scenario.binary,
 		"prepare-commits",
 		"--change",
 		productionIntegrationChange,
 	)
-	command.Dir = harness.Workspace()
-	command.Env = replaceProcessEnvironment(harness.Environment(), environment)
-	process := &productionCommandProcess{command: command}
+	command.Dir = scenario.harness.Workspace()
+	command.Env = replaceProcessEnvironment(scenario.harness.Environment(), environment)
+	process := &productionCommandProcess{context: scenario.context, command: command}
 	command.Stdout = &process.output
 	command.Stderr = &process.output
 	if err := command.Start(); err != nil {
@@ -318,23 +326,22 @@ func replaceProcessEnvironment(base, replacements []string) []string {
 }
 
 type recoverableDeliveryScenario struct {
-	harness   *testpaseo.Harness
-	binary    string
+	*productionScenario
 	sessionID string
 }
 
 func startRecoverableDeliveryScenario(t *testing.T) recoverableDeliveryScenario {
 	t.Helper()
-	harness := startProductionHarness(t)
+	scenario := startProductionScenario(t)
+	harness := scenario.harness
 	harness.EnableCommandRecording(t)
 	prepareProductionRepository(t, harness.Workspace())
 	makeProductionRepositoryDirty(t, harness.Workspace())
 	harness.SetBehavior(t, testpaseo.BehaviorWorking)
-	binary := buildProductionCommand(t)
 
-	process := startProductionCommand(t, binary, harness)
-	sessionID := waitForOnlyOwnSession(t, harness, process)
-	waitForRecordedCommandEvent(t, harness, testpaseo.CommandStarted, "wait")
+	process := startProductionCommand(t, scenario)
+	sessionID := waitForOnlyOwnSession(t, scenario, process)
+	waitForRecordedCommandEvent(t, scenario, testpaseo.CommandStarted, "wait")
 	if err := process.command.Process.Signal(os.Interrupt); err != nil {
 		t.Fatalf("прервать исходный процесс перед восстановлением: %v", err)
 	}
@@ -344,7 +351,7 @@ func startRecoverableDeliveryScenario(t *testing.T) recoverableDeliveryScenario 
 
 	harness.SetBehavior(t, testpaseo.BehaviorFinish)
 	harness.ResetCommandRecording(t)
-	return recoverableDeliveryScenario{harness: harness, binary: binary, sessionID: sessionID}
+	return recoverableDeliveryScenario{productionScenario: scenario, sessionID: sessionID}
 }
 
 func deliveryConfigurationJSON(address, tokenEnvironment, priority string) string {
