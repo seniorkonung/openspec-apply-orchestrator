@@ -17,7 +17,7 @@ import (
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/config"
 )
 
-func TestNtfyДоставляетСсылкуСАвторизациейТолькоИзОкружения(t *testing.T) {
+func TestNtfyДоставляетОсмысленноеПредставлениеСАвторизациейТолькоИзОкружения(t *testing.T) {
 	tests := []struct {
 		name              string
 		tokenEnvironment  string
@@ -47,7 +47,9 @@ func TestNtfyДоставляетСсылкуСАвторизациейТоль�
 				}
 				requests <- capturedNtfyRequest{
 					method:        request.Method,
+					title:         request.Header.Get("Title"),
 					click:         request.Header.Get("Click"),
+					priority:      request.Header.Get("Priority"),
 					authorization: request.Header.Get("Authorization"),
 					contentType:   request.Header.Get("Content-Type"),
 					body:          string(body),
@@ -71,8 +73,14 @@ func TestNtfyДоставляетСсылкуСАвторизациейТоль�
 			if request.method != http.MethodPost {
 				t.Errorf("ожидался POST, получен %q", request.method)
 			}
+			if request.title != "Подготовка коммитов: "+event.Change() {
+				t.Errorf("неожиданный Title: %q", request.title)
+			}
 			if request.click != event.SessionLink().String() {
 				t.Errorf("заголовок Click не содержит ссылку сессии: %q", request.click)
+			}
+			if request.priority != string(config.NtfyPriorityDefault) {
+				t.Errorf("неожиданный Priority: %q", request.priority)
 			}
 			if request.authorization != tt.wantAuthorization {
 				t.Errorf("неожиданная авторизация: %q", request.authorization)
@@ -80,12 +88,94 @@ func TestNtfyДоставляетСсылкуСАвторизациейТоль�
 			if request.contentType != "text/plain; charset=utf-8" {
 				t.Errorf("неожиданный Content-Type: %q", request.contentType)
 			}
-			for _, want := range []string{event.Change(), event.SessionID().String(), event.Message()} {
-				if !strings.Contains(request.body, want) {
-					t.Errorf("тело запроса не содержит %q: %q", want, request.body)
+			if request.body != event.Message() {
+				t.Errorf("неожиданное тело запроса: %q", request.body)
+			}
+			for _, private := range []string{event.SessionID().String(), event.SessionLink().String()} {
+				if strings.Contains(request.title, private) || strings.Contains(request.body, private) {
+					t.Errorf("пользовательское представление раскрывает %q: title=%q body=%q", private, request.title, request.body)
 				}
 			}
 		})
+	}
+}
+
+func TestNtfyПередаётКаждыйРазрешённыйПриоритетБезПодмены(t *testing.T) {
+	tests := []struct {
+		configured string
+		want       config.NtfyPriority
+	}{
+		{want: config.NtfyPriorityDefault},
+		{configured: "min", want: config.NtfyPriorityMin},
+		{configured: "low", want: config.NtfyPriorityLow},
+		{configured: "default", want: config.NtfyPriorityDefault},
+		{configured: "high", want: config.NtfyPriorityHigh},
+		{configured: "max", want: config.NtfyPriorityMax},
+	}
+
+	for _, tt := range tests {
+		name := tt.configured
+		if name == "" {
+			name = "отсутствующий"
+		}
+		t.Run(name, func(t *testing.T) {
+			priorities := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				priorities <- request.Header.Get("Priority")
+				writer.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			channel := readNtfyChannelWithPriority(t, server.URL+"/topic", "", tt.configured)
+			deliverer, err := NewNtfy(channel)
+			if err != nil {
+				t.Fatalf("создать адаптер ntfy: %v", err)
+			}
+			if deliveryErr := deliverer.Deliver(context.Background(), testNtfyIntervention(t)); deliveryErr != nil {
+				t.Fatalf("доставить уведомление: %v", deliveryErr)
+			}
+			if got := <-priorities; got != string(tt.want) {
+				t.Fatalf("ожидался Priority %q, получен %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestNtfyПовторяетТоЖеПредставлениеИПриоритетЧерезОдинАдаптер(t *testing.T) {
+	requests := make(chan capturedNtfyRequest, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("прочитать тело повторного ntfy-запроса: %v", err)
+		}
+		requests <- capturedNtfyRequest{
+			title:    request.Header.Get("Title"),
+			click:    request.Header.Get("Click"),
+			priority: request.Header.Get("Priority"),
+			body:     string(body),
+		}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	deliverer, err := NewNtfy(readNtfyChannelWithPriority(t, server.URL+"/topic", "", "high"))
+	if err != nil {
+		t.Fatalf("создать адаптер ntfy: %v", err)
+	}
+	event := testNtfyIntervention(t)
+	for attempt := 1; attempt <= 2; attempt++ {
+		if deliveryErr := deliverer.Deliver(context.Background(), event); deliveryErr != nil {
+			t.Fatalf("выполнить отправку %d: %v", attempt, deliveryErr)
+		}
+	}
+
+	first := <-requests
+	second := <-requests
+	if first != second {
+		t.Fatalf("повтор изменил представление: первый=%#v второй=%#v", first, second)
+	}
+	if first.priority != string(config.NtfyPriorityHigh) {
+		t.Fatalf("повтор не сохранил выбранный приоритет: %q", first.priority)
 	}
 }
 
@@ -451,7 +541,9 @@ func newTestNtfy(
 
 type capturedNtfyRequest struct {
 	method        string
+	title         string
 	click         string
+	priority      string
 	authorization string
 	contentType   string
 	body          string
@@ -471,9 +563,18 @@ func testNtfyIntervention(t *testing.T) Intervention {
 }
 
 func readNtfyChannel(t *testing.T, address, tokenEnvironment string) config.InterventionChannel {
+	return readNtfyChannelWithPriority(t, address, tokenEnvironment, "")
+}
+
+func readNtfyChannelWithPriority(
+	t *testing.T,
+	address string,
+	tokenEnvironment string,
+	priority string,
+) config.InterventionChannel {
 	t.Helper()
 	root := testConfigRoot(t)
-	writeNtfyConfig(t, root, address, tokenEnvironment)
+	writeNtfyConfigWithPriority(t, root, address, tokenEnvironment, priority)
 	channel, err := config.ReadSnapshot(root).InterventionChannel()
 	if err != nil {
 		t.Fatalf("прочитать канал ntfy: %v", err)
@@ -491,15 +592,30 @@ func testConfigRoot(t *testing.T) config.RepositoryRoot {
 }
 
 func writeNtfyConfig(t *testing.T, root config.RepositoryRoot, address, tokenEnvironment string) {
+	writeNtfyConfigWithPriority(t, root, address, tokenEnvironment, "")
+}
+
+func writeNtfyConfigWithPriority(
+	t *testing.T,
+	root config.RepositoryRoot,
+	address string,
+	tokenEnvironment string,
+	priority string,
+) {
 	t.Helper()
 	tokenField := ""
 	if tokenEnvironment != "" {
 		tokenField = fmt.Sprintf(",\"tokenEnv\":%q", tokenEnvironment)
 	}
+	priorityField := ""
+	if priority != "" {
+		priorityField = fmt.Sprintf(",\"priority\":%q", priority)
+	}
 	document := fmt.Sprintf(
-		`{"version":1,"notifications":{"intervention":{"type":"ntfy","url":%q%s}}}`,
+		`{"version":1,"notifications":{"intervention":{"type":"ntfy","url":%q%s%s}}}`,
 		address,
 		tokenField,
+		priorityField,
 	)
 	if err := os.WriteFile(filepath.Join(root.String(), config.FileName), []byte(document), 0o600); err != nil {
 		t.Fatalf("записать конфигурацию: %v", err)

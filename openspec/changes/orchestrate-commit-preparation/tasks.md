@@ -432,7 +432,7 @@
   - **Files likely touched:** `internal/orchestrator/commit_preparation.go`, `internal/orchestrator/commit_preparation_test.go`, `internal/orchestrator/session.go`, `internal/orchestrator/session_test.go`.
   - **Estimated scope:** M.
 
-- [ ] 3.5 Сделать каждое уведомление ntfy осмысленным, кликабельным и отправленным с единым разрешённым приоритетом
+- [x] 3.5 Сделать каждое уведомление ntfy осмысленным, кликабельным и отправленным с единым разрешённым приоритетом
   - **Acceptance criteria:**
     - `notifications.intervention.priority` является необязательным типизированным значением `min`, `low`, `default`, `high` или `max`; отсутствие разрешается в `default`, а иные строки, числа и синонимы отклоняются с путём `notifications.intervention.priority`. Снимок сохраняет разрешённый приоритет вместе с URL и именем переменной токена без повторного чтения файла.
     - Каждый ntfy-запрос передаёт `Title: Подготовка коммитов: <change>`, безопасный текст причины, проверенный Paseo deep-link в `Click` и разрешённый приоритет в `Priority`. Непрозрачный ID сессии и сырой deep-link отсутствуют в `Title` и теле, но ID остаётся внутренним ключом эпизода.

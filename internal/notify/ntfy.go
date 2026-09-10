@@ -3,7 +3,6 @@ package notify
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -31,6 +30,7 @@ type ntfyDeliverer struct {
 	address           string
 	tokenEnvironment  string
 	hasToken          bool
+	priority          config.NtfyPriority
 	lookupEnvironment func(string) (string, bool)
 	client            http.Client
 	maximumResponse   int64
@@ -57,6 +57,7 @@ func newNtfy(channel config.InterventionChannel, dependencies ntfyDependencies) 
 		address:           channel.URL(),
 		tokenEnvironment:  tokenEnvironment,
 		hasToken:          hasToken,
+		priority:          channel.Priority(),
 		lookupEnvironment: dependencies.lookupEnvironment,
 		client: http.Client{
 			Transport: dependencies.transport,
@@ -87,13 +88,15 @@ func (deliverer *ntfyDeliverer) Deliver(ctx context.Context, event Intervention)
 		ctx,
 		http.MethodPost,
 		deliverer.address,
-		strings.NewReader(ntfyMessage(event)),
+		strings.NewReader(event.Message()),
 	)
 	if err != nil {
 		return NewDeliveryError()
 	}
 	request.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	request.Header.Set("Title", "Подготовка коммитов: "+event.Change())
 	request.Header.Set("Click", event.SessionLink().String())
+	request.Header.Set("Priority", string(deliverer.priority))
 	if deliverer.hasToken {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -110,15 +113,6 @@ func (deliverer *ntfyDeliverer) Deliver(ctx context.Context, event Intervention)
 		return NewDeliveryError()
 	}
 	return nil
-}
-
-func ntfyMessage(event Intervention) string {
-	return fmt.Sprintf(
-		"OpenSpec change %s требует участия: %s Сессия Paseo: %s",
-		event.Change(),
-		event.Message(),
-		event.SessionID().String(),
-	)
 }
 
 var _ Deliverer = (*ntfyDeliverer)(nil)
