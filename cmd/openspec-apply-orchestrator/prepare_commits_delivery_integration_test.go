@@ -229,6 +229,181 @@ func TestProductionКомандаПродолжаетСопровождение�
 	}
 }
 
+func TestProductionКомандаСохраняетПолитикуПовтораИПрименяетНовыйСнимокПослеПерезапуска(t *testing.T) {
+	t.Parallel()
+	scenario := startRecoverableDeliveryScenario(t)
+	failing := startDeliveryProbe(t, false, func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusServiceUnavailable)
+	})
+	recovered := startDeliveryProbe(t, false, nil)
+	const (
+		originalTokenEnvironment = "OA_INTEGRATION_NTFY_TOKEN_ORIGINAL_3_10"
+		originalToken            = "original-integration-token-3-10"
+		newTokenEnvironment      = "OA_INTEGRATION_NTFY_TOKEN_NEW_3_10"
+		newToken                 = "new-integration-token-3-10"
+		minimumRetryInterval     = 20 * time.Second
+	)
+	environment := []string{
+		originalTokenEnvironment + "=" + originalToken,
+		newTokenEnvironment + "=" + newToken,
+	}
+	originalRequest := expectedIntegrationNtfyRequest{
+		change:      productionIntegrationChange,
+		message:     "После хода агента в Git остались незакоммиченные изменения.",
+		sessionID:   scenario.sessionID,
+		sessionLink: integrationSessionLink(t, scenario.harness, scenario.sessionID),
+		priority:    config.NtfyPriorityHigh,
+	}
+	writeDeliveryConfigurationFixture(
+		t,
+		scenario.harness.Workspace(),
+		deliveryConfigurationJSON(failing.URL(), originalTokenEnvironment, "high"),
+	)
+	scenario.harness.ResetCommandRecording(t)
+
+	firstProcess := startProductionCommandWithEnvironment(
+		t,
+		scenario.binary,
+		scenario.harness,
+		environment,
+	)
+	first := failing.WaitRequest(t)
+	if first.path != "/topic" {
+		t.Fatalf("первая попытка пришла на неожиданный путь %q", first.path)
+	}
+	if err := validateIntegrationNtfyRequest(first.notification, originalRequest); err != nil {
+		t.Fatalf("первая попытка доставки не соответствует снимку: %v", err)
+	}
+	if first.authorization != "Bearer "+originalToken {
+		t.Fatalf("первая попытка использовала неожиданный Authorization %q", first.authorization)
+	}
+
+	writeDeliveryConfigurationFixture(
+		t,
+		scenario.harness.Workspace(),
+		deliveryConfigurationJSON(recovered.URL(), newTokenEnvironment, "min"),
+	)
+	second := failing.WaitRequest(t)
+	if second.path != first.path {
+		t.Fatalf("повтор изменил путь доставки с %q на %q", first.path, second.path)
+	}
+	if err := validateIntegrationNtfyRequest(second.notification, originalRequest); err != nil {
+		t.Fatalf("повтор доставки изменил представление исходного снимка: %v", err)
+	}
+	if second.authorization != "Bearer "+originalToken {
+		t.Fatalf("повтор доставки подменил Authorization: %q", second.authorization)
+	}
+	if elapsed := second.observedAt.Sub(first.observedAt); elapsed < minimumRetryInterval {
+		t.Fatalf("повтор выполнен без ограничения частоты через %s", elapsed)
+	}
+	if first.notification != second.notification {
+		t.Fatalf("повтор изменил пользовательские поля: первая=%#v повтор=%#v", first, second)
+	}
+	recovered.AssertNoRequest(t)
+	waitForOutputCount(t, &firstProcess.output, "Уведомление не доставлено", 2)
+	if err := firstProcess.command.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("прервать процесс после подтверждённого повтора: %v", err)
+	}
+	firstResult := firstProcess.wait(t)
+	if firstResult.exitCode != 130 {
+		t.Fatalf("процесс с повтором завершился с кодом %d вместо 130:\n%s", firstResult.exitCode, firstResult.output)
+	}
+	assertDeliveryOutputIsSafe(
+		t,
+		firstResult.output,
+		failing.URL(),
+		recovered.URL(),
+		originalToken,
+		newToken,
+	)
+	assertNoPaseoMutations(t, scenario.harness.RecordedCommands(t))
+	assertOnlyOwnSession(t, scenario.harness, scenario.sessionID)
+
+	scenario.harness.ResetCommandRecording(t)
+	secondProcess := startProductionCommandWithEnvironment(
+		t,
+		scenario.binary,
+		scenario.harness,
+		environment,
+	)
+	afterRestart := recovered.WaitRequest(t)
+	newRequest := originalRequest
+	newRequest.priority = config.NtfyPriorityMin
+	if err := validateIntegrationNtfyRequest(afterRestart.notification, newRequest); err != nil {
+		t.Fatalf("новый снимок после перезапуска не применён: %v", err)
+	}
+	if afterRestart.authorization != "Bearer "+newToken {
+		t.Fatalf("новый процесс не применил новый Authorization: %q", afterRestart.authorization)
+	}
+	failing.AssertNoRequest(t)
+	waitForOutput(t, &secondProcess.output, "Уведомление доставлено")
+	inspections := countCommandEvents(
+		scenario.harness.RecordedCommandEvents(t),
+		testpaseo.CommandStarted,
+		"inspect",
+	)
+	waitForRecordedCommandEventCount(
+		t,
+		scenario.harness,
+		testpaseo.CommandStarted,
+		"inspect",
+		inspections+1,
+	)
+	recovered.AssertNoRequest(t)
+	if err := secondProcess.command.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("прервать процесс после проверки успешного эпизода: %v", err)
+	}
+	secondResult := secondProcess.wait(t)
+	if secondResult.exitCode != 130 {
+		t.Fatalf("восстановленный процесс завершился с кодом %d вместо 130:\n%s", secondResult.exitCode, secondResult.output)
+	}
+	assertDeliveryOutputIsSafe(
+		t,
+		secondResult.output,
+		failing.URL(),
+		recovered.URL(),
+		originalToken,
+		newToken,
+	)
+	if strings.Contains(secondResult.output, "Повторяю доставку уведомления") {
+		t.Fatalf("успешный неизменный эпизод был назначен на повтор:\n%s", secondResult.output)
+	}
+	assertNoPaseoMutations(t, scenario.harness.RecordedCommands(t))
+	assertOnlyOwnSession(t, scenario.harness, scenario.sessionID)
+}
+
+func waitForOutputCount(
+	t *testing.T,
+	output *synchronizedBuffer,
+	fragment string,
+	want int,
+) {
+	t.Helper()
+	deadline := time.Now().Add(productionIntegrationEventTimeout)
+	for time.Now().Before(deadline) {
+		if strings.Count(output.String(), fragment) >= want {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf(
+		"не дождаться %d вхождений %q в выводе:\n%s",
+		want,
+		fragment,
+		output.String(),
+	)
+}
+
+func assertDeliveryOutputIsSafe(t *testing.T, output string, private ...string) {
+	t.Helper()
+	private = append(private, strings.TrimSpace(promptsPackageText()))
+	for _, value := range private {
+		if value != "" && strings.Contains(output, value) {
+			t.Fatalf("вывод доставки раскрыл приватные данные %q:\n%s", value, output)
+		}
+	}
+}
+
 type deliveryFailureFixture struct {
 	name        string
 	address     string
