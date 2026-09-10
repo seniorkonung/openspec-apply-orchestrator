@@ -88,9 +88,7 @@ func TestProductionПользовательПослеСбояДоставкиП�
 	}
 	recovered.AssertNoRequest(t)
 	waitForOutputCount(t, scenario.productionScenario, &firstProcess.output, "Уведомление не доставлено", 2)
-	if err := firstProcess.command.Process.Signal(os.Interrupt); err != nil {
-		t.Fatalf("прервать процесс после подтверждённого повтора: %v", err)
-	}
+	firstProcess.interrupt(t)
 	firstResult := firstProcess.wait(t)
 	if firstResult.exitCode != 130 {
 		t.Fatalf("процесс с повтором завершился с кодом %d вместо 130:\n%s", firstResult.exitCode, firstResult.output)
@@ -136,9 +134,7 @@ func TestProductionПользовательПослеСбояДоставкиП�
 		inspections+1,
 	)
 	recovered.AssertNoRequest(t)
-	if err := secondProcess.command.Process.Signal(os.Interrupt); err != nil {
-		t.Fatalf("прервать процесс после проверки успешного эпизода: %v", err)
-	}
+	secondProcess.interrupt(t)
 	secondResult := secondProcess.wait(t)
 	if secondResult.exitCode != 130 {
 		t.Fatalf("восстановленный процесс завершился с кодом %d вместо 130:\n%s", secondResult.exitCode, secondResult.output)
@@ -291,8 +287,7 @@ func startProductionCommandWithEnvironment(
 	environment []string,
 ) *productionCommandProcess {
 	t.Helper()
-	command := exec.CommandContext(
-		scenario.context,
+	command := exec.Command(
 		scenario.binary,
 		"prepare-commits",
 		"--change",
@@ -300,12 +295,15 @@ func startProductionCommandWithEnvironment(
 	)
 	command.Dir = scenario.harness.Workspace()
 	command.Env = replaceProcessEnvironment(scenario.harness.Environment(), environment)
-	process := &productionCommandProcess{context: scenario.context, command: command}
+	process := &productionCommandProcess{context: scenario.context}
 	command.Stdout = &process.output
 	command.Stderr = &process.output
-	if err := command.Start(); err != nil {
+	owned, err := testpaseo.StartOwnedProcess(command)
+	if err != nil {
 		t.Fatalf("запустить production-команду с окружением доставки: %v", err)
 	}
+	process.process = owned
+	t.Cleanup(func() { process.cleanup(t) })
 	return process
 }
 
@@ -335,16 +333,14 @@ func startRecoverableDeliveryScenario(t *testing.T) recoverableDeliveryScenario 
 	scenario := startProductionScenario(t)
 	harness := scenario.harness
 	harness.EnableCommandRecording(t)
-	prepareProductionRepository(t, harness.Workspace())
-	makeProductionRepositoryDirty(t, harness.Workspace())
+	prepareProductionRepository(t, scenario)
+	makeProductionRepositoryDirty(t, scenario)
 	harness.SetBehavior(t, testpaseo.BehaviorWorking)
 
 	process := startProductionCommand(t, scenario)
 	sessionID := waitForOnlyOwnSession(t, scenario, process)
 	waitForRecordedCommandEvent(t, scenario, testpaseo.CommandStarted, "wait")
-	if err := process.command.Process.Signal(os.Interrupt); err != nil {
-		t.Fatalf("прервать исходный процесс перед восстановлением: %v", err)
-	}
+	process.interrupt(t)
 	if result := process.wait(t); result.exitCode != 130 {
 		t.Fatalf("исходный процесс завершился с кодом %d вместо 130:\n%s", result.exitCode, result.output)
 	}

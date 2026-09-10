@@ -22,10 +22,10 @@ func TestProductionПользовательПослеУведомленияПр�
 	scenario := startProductionScenario(t)
 	harness := scenario.harness
 	harness.EnableCommandRecording(t)
-	prepareProductionRepository(t, harness.Workspace())
+	prepareProductionRepository(t, scenario)
 	receiver := startIntegrationNtfyReceiver(t, scenario)
 	writeProductionConfigWithNotification(t, harness.Workspace(), receiver.URL(), "high")
-	makeProductionRepositoryDirty(t, harness.Workspace())
+	makeProductionRepositoryDirty(t, scenario)
 	harness.SetBehavior(t, testpaseo.BehaviorWorking)
 
 	process := startProductionCommand(t, scenario)
@@ -51,9 +51,10 @@ func TestProductionПользовательПослеУведомленияПр�
 		t.Fatalf("переход от idle к продолжению нарушен: %v\nсобытия: %#v", err, harness.RecordedCommandEvents(t))
 	}
 
-	runTool(t, harness.Workspace(), "git", "add", "--all")
+	runTool(t, scenario, harness.Workspace(), "git", "add", "--all")
 	runTool(
 		t,
+		scenario,
 		harness.Workspace(),
 		"git",
 		"-c", "user.name=OpenSpec Apply Integration",
@@ -67,7 +68,7 @@ func TestProductionПользовательПослеУведомленияПр�
 	if result.exitCode != exitSuccess {
 		t.Fatalf("продолженная production-команда завершилась с кодом %d:\n%s", result.exitCode, result.output)
 	}
-	if status := gitOutput(t, harness.Workspace(), "status", "--porcelain=v1"); status != "" {
+	if status := gitOutput(t, scenario, "status", "--porcelain=v1"); status != "" {
 		t.Fatalf("после продолжения Git остался изменённым:\n%s", status)
 	}
 	assertSessionArchived(t, harness, sessionID)

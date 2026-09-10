@@ -73,6 +73,7 @@ const (
 )
 
 type Harness struct {
+	context     context.Context
 	cliPath     string
 	path        string
 	home        string
@@ -97,20 +98,31 @@ type Harness struct {
 
 func Start(t *testing.T) *Harness {
 	t.Helper()
-	return start(t, true, false)
+	return start(t, context.Background(), true, false, Binaries{})
 }
 
 func StartIsolated(t *testing.T) *Harness {
 	t.Helper()
-	return start(t, false, false)
+	return start(t, context.Background(), false, false, Binaries{})
+}
+
+func StartIsolatedWithBinaries(t *testing.T, ctx context.Context, binaries Binaries) *Harness {
+	t.Helper()
+	return start(t, ctx, false, false, binaries)
 }
 
 func StartWithUserPlugin(t *testing.T) *Harness {
 	t.Helper()
-	return start(t, true, true)
+	return start(t, context.Background(), true, true, Binaries{})
 }
 
-func start(t *testing.T, exportEnvironment, withUserPlugin bool) *Harness {
+func start(
+	t *testing.T,
+	ctx context.Context,
+	exportEnvironment bool,
+	withUserPlugin bool,
+	binaries Binaries,
+) *Harness {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("интеграционный стенд Paseo поддерживается только на Linux")
@@ -132,6 +144,7 @@ func start(t *testing.T, exportEnvironment, withUserPlugin bool) *Harness {
 	})
 
 	harness := &Harness{
+		context:     ctx,
 		cliPath:     cliPath,
 		path:        os.Getenv("PATH"),
 		home:        home,
@@ -140,7 +153,6 @@ func start(t *testing.T, exportEnvironment, withUserPlugin bool) *Harness {
 		controlPath: filepath.Join(home, "provider.control"),
 		releasePath: filepath.Join(home, "provider.release"),
 		recordPath:  filepath.Join(home, "provider-prompts.jsonl"),
-		proxyPath:   filepath.Join(home, "proxy-bin", "paseo"),
 		mutationLog: filepath.Join(home, "intercepted-mutations.log"),
 		commandLog:  filepath.Join(home, "commands.jsonl"),
 		eventLog:    filepath.Join(home, "command-events.jsonl"),
@@ -153,12 +165,17 @@ func start(t *testing.T, exportEnvironment, withUserPlugin bool) *Harness {
 	if err := os.Mkdir(harness.workspace, 0o700); err != nil {
 		t.Fatalf("создать каталог стенда: %v", err)
 	}
-	providerPath := filepath.Join(home, "test-provider")
-	buildTestBinary(t, root, providerPath, "./internal/paseo/testpaseo/cmd/provider")
-	if err := os.Mkdir(filepath.Dir(harness.proxyPath), 0o700); err != nil {
-		t.Fatalf("создать каталог прокси Paseo: %v", err)
+	if binaries == (Binaries{}) {
+		var buildErr error
+		binaries, buildErr = BuildBinaries(ctx, root, filepath.Join(home, "binaries"))
+		if buildErr != nil {
+			t.Fatalf("собрать helper-бинарники стенда: %v", buildErr)
+		}
+	} else if err := binaries.validate(); err != nil {
+		t.Fatalf("проверить общие helper-бинарники стенда: %v", err)
 	}
-	buildTestBinary(t, root, harness.proxyPath, "./internal/paseo/testpaseo/cmd/paseoproxy")
+	providerPath := binaries.providerPath
+	harness.proxyPath = binaries.proxyPath
 	harness.SetBehavior(t, BehaviorFinish)
 	pluginPath := ""
 	if withUserPlugin {
@@ -174,6 +191,7 @@ func start(t *testing.T, exportEnvironment, withUserPlugin bool) *Harness {
 	if exportEnvironment {
 		setProcessEnvironment(t, harness)
 	}
+	t.Cleanup(func() { harness.stop(t) })
 	result, err := harness.runCLI(
 		"daemon", "start",
 		"--home", harness.home,
@@ -183,7 +201,6 @@ func start(t *testing.T, exportEnvironment, withUserPlugin bool) *Harness {
 	if err != nil {
 		t.Fatalf("запустить изолированный daemon Paseo: %v\nstdout:\n%s\nstderr:\n%s", err, result.Stdout, result.Stderr)
 	}
-	t.Cleanup(func() { harness.stop(t) })
 	harness.waitUntilReady(t)
 	harness.waitUntilProvidersReady(t)
 	if withUserPlugin {
@@ -514,7 +531,7 @@ export default function contribute(server: PluginServerContext) {
 
 func (harness *Harness) waitUntilReady(t *testing.T) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(harness.context, 15*time.Second)
 	defer cancel()
 	var lastResult CLIResult
 	var lastErr error
@@ -536,9 +553,13 @@ func (harness *Harness) waitUntilReady(t *testing.T) {
 		}
 		select {
 		case <-ctx.Done():
+			daemonLog, _ := os.ReadFile(filepath.Join(harness.home, "daemon.log"))
+			if len(daemonLog) > 4096 {
+				daemonLog = daemonLog[len(daemonLog)-4096:]
+			}
 			t.Fatalf(
-				"изолированный daemon Paseo не готов: %v\nstdout:\n%s\nstderr:\n%s",
-				lastErr, lastResult.Stdout, lastResult.Stderr,
+				"изолированный daemon Paseo не готов: %v\nstdout:\n%s\nstderr:\n%s\ndaemon.log:\n%s",
+				lastErr, lastResult.Stdout, lastResult.Stderr, daemonLog,
 			)
 		case <-time.After(100 * time.Millisecond):
 		}
@@ -547,7 +568,7 @@ func (harness *Harness) waitUntilReady(t *testing.T) {
 
 func (harness *Harness) waitUntilProvidersReady(t *testing.T) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(harness.context, 15*time.Second)
 	defer cancel()
 	var lastResult CLIResult
 	var lastErr error
@@ -576,7 +597,7 @@ func (harness *Harness) waitUntilProvidersReady(t *testing.T) {
 
 func (harness *Harness) waitUntilUserPluginReady(t *testing.T) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(harness.context, 15*time.Second)
 	defer cancel()
 	var lastResult CLIResult
 	var lastErr error
@@ -624,7 +645,10 @@ func providersAvailable(providers []struct {
 
 func (harness *Harness) stop(t *testing.T) {
 	t.Helper()
-	result, err := harness.runCLI(
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, err := harness.runCLIContext(
+		ctx,
 		"daemon", "stop", "--home", harness.home,
 		"--timeout", "3", "--kill-timeout", "2", "--force", "--json",
 	)
@@ -634,6 +658,10 @@ func (harness *Harness) stop(t *testing.T) {
 }
 
 func (harness *Harness) runCLI(args ...string) (CLIResult, error) {
+	return harness.runCLIContext(harness.context, args...)
+}
+
+func (harness *Harness) runCLIContext(ctx context.Context, args ...string) (CLIResult, error) {
 	command := exec.Command(harness.cliPath, args...)
 	command.Env = harness.environment()
 	command.Dir = harness.workspace
@@ -641,7 +669,9 @@ func (harness *Harness) runCLI(args ...string) (CLIResult, error) {
 	var stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
-	err := command.Run()
+	preserveDescendants := len(args) >= 2 && args[0] == "daemon" &&
+		(args[1] == "start" || args[1] == "restart")
+	err := runOwnedCommand(ctx, command, preserveDescendants)
 	return CLIResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}, err
 }
 
@@ -725,13 +755,4 @@ func moduleRoot(t *testing.T) string {
 		t.Fatal("не определить путь исходного файла стенда")
 	}
 	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
-}
-
-func buildTestBinary(t *testing.T, root, outputPath, packagePath string) {
-	t.Helper()
-	build := exec.Command("go", "build", "-tags=paseo_integration", "-o", outputPath, packagePath)
-	build.Dir = root
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("собрать %s: %v\n%s", packagePath, err, output)
-	}
 }

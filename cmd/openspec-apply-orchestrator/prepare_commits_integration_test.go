@@ -3,13 +3,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -26,9 +30,15 @@ const productionIntegrationEventTimeout = 90 * time.Second
 
 const productionIntegrationScenarioTimeout = 3 * time.Minute
 
+const productionIntegrationSetupTimeout = 3 * time.Minute
+
 var productionIntegrationBinary string
+var productionIntegrationBinaries testpaseo.Binaries
 
 func TestMain(m *testing.M) {
+	setupContext, cancelSetup := context.WithTimeout(context.Background(), productionIntegrationSetupTimeout)
+	defer cancelSetup()
+
 	temporaryRoot, err := os.MkdirTemp("", "oa-production-scenarios-")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "создать каталог сборки production-бинарника: %v\n", err)
@@ -48,8 +58,31 @@ func TestMain(m *testing.M) {
 		"./cmd/openspec-apply-orchestrator",
 	)
 	command.Dir = moduleRoot
-	if output, buildErr := command.CombinedOutput(); buildErr != nil {
-		fmt.Fprintf(os.Stderr, "собрать production-бинарник: %v\n%s", buildErr, output)
+	var buildOutput strings.Builder
+	command.Stdout = &buildOutput
+	command.Stderr = &buildOutput
+	if buildErr := testpaseo.RunOwnedCommand(setupContext, command); buildErr != nil {
+		fmt.Fprintf(os.Stderr, "собрать production-бинарник: %v\n%s", buildErr, buildOutput.String())
+		_ = os.RemoveAll(temporaryRoot)
+		os.Exit(1)
+	}
+	if chmodErr := os.Chmod(productionIntegrationBinary, 0o500); chmodErr != nil {
+		fmt.Fprintf(os.Stderr, "сделать production-бинарник неизменяемым: %v\n", chmodErr)
+		_ = os.RemoveAll(temporaryRoot)
+		os.Exit(1)
+	}
+	if setupErr := setupContext.Err(); setupErr != nil {
+		fmt.Fprintf(os.Stderr, "истёк deadline общей подготовки: %v\n", setupErr)
+		_ = os.RemoveAll(temporaryRoot)
+		os.Exit(1)
+	}
+	productionIntegrationBinaries, err = testpaseo.BuildBinaries(
+		setupContext,
+		moduleRoot,
+		filepath.Join(temporaryRoot, "helpers"),
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "собрать общие helper-бинарники: %v\n", err)
 		_ = os.RemoveAll(temporaryRoot)
 		os.Exit(1)
 	}
@@ -68,10 +101,10 @@ func TestProductionПользовательПодготавливаетВсеИ�
 	scenario := startProductionScenario(t)
 	harness := scenario.harness
 	harness.EnableCommandRecording(t)
-	prepareProductionRepository(t, harness.Workspace())
+	prepareProductionRepository(t, scenario)
 
-	initialHEAD := gitOutput(t, harness.Workspace(), "rev-parse", "HEAD")
-	if status := gitOutput(t, harness.Workspace(), "status", "--porcelain=v1"); status != "" {
+	initialHEAD := gitOutput(t, scenario, "rev-parse", "HEAD")
+	if status := gitOutput(t, scenario, "status", "--porcelain=v1"); status != "" {
 		t.Fatalf("исходный Git неожиданно содержит изменения:\n%s", status)
 	}
 	clean := runProductionCommand(t, scenario)
@@ -81,10 +114,10 @@ func TestProductionПользовательПодготавливаетВсеИ�
 	if !strings.Contains(clean.output, "Поручение не требуется: незакоммиченных изменений нет.") {
 		t.Fatalf("вывод чистого запуска не сообщает об отсутствии работы:\n%s", clean.output)
 	}
-	if currentHEAD := gitOutput(t, harness.Workspace(), "rev-parse", "HEAD"); currentHEAD != initialHEAD {
+	if currentHEAD := gitOutput(t, scenario, "rev-parse", "HEAD"); currentHEAD != initialHEAD {
 		t.Fatalf("чистый запуск изменил HEAD: было %s, стало %s", initialHEAD, currentHEAD)
 	}
-	if status := gitOutput(t, harness.Workspace(), "status", "--porcelain=v1"); status != "" {
+	if status := gitOutput(t, scenario, "status", "--porcelain=v1"); status != "" {
 		t.Fatalf("чистый запуск изменил рабочее дерево:\n%s", status)
 	}
 	if prompts := harness.Prompts(t); len(prompts) != 0 {
@@ -93,21 +126,21 @@ func TestProductionПользовательПодготавливаетВсеИ�
 	assertNoPaseoMutations(t, harness.RecordedCommands(t))
 	harness.ResetCommandRecording(t)
 
-	makeProductionRepositoryDirty(t, harness.Workspace())
+	makeProductionRepositoryDirty(t, scenario)
 	harness.SetBehavior(t, testpaseo.Behavior("commit"))
 	completed := runProductionCommand(t, scenario)
 	if completed.exitCode != exitSuccess {
 		catalog := harness.RunCLI(t, "provider", "ls", "--json")
 		t.Fatalf("подготовка коммитов завершилась с кодом %d:\n%s\nкаталог:\n%s", completed.exitCode, completed.output, catalog.Stdout)
 	}
-	if status := gitOutput(t, harness.Workspace(), "status", "--porcelain=v1"); status != "" {
+	if status := gitOutput(t, scenario, "status", "--porcelain=v1"); status != "" {
 		t.Fatalf("после поручения Git остался изменённым:\n%s", status)
 	}
 	if delivered := harness.Prompts(t); len(delivered) != 1 ||
 		strings.TrimSpace(delivered[0]) != strings.TrimSpace(promptsPackageText()) {
 		t.Fatalf("тестовый провайдер получил неожиданные поручения: %#v", delivered)
 	}
-	if count := gitOutput(t, harness.Workspace(), "rev-list", "--count", "HEAD"); count != "2" {
+	if count := gitOutput(t, scenario, "rev-list", "--count", "HEAD"); count != "2" {
 		t.Fatalf("ожидался один новый коммит агента, количество коммитов: %q", count)
 	}
 	assertIntegrationRunContract(t, harness.RecordedCommands(t))
@@ -117,17 +150,15 @@ func TestProductionПользовательПослеПрерыванияПро�
 	scenario := startProductionScenario(t)
 	harness := scenario.harness
 	harness.EnableCommandRecording(t)
-	prepareProductionRepository(t, harness.Workspace())
-	makeProductionRepositoryDirty(t, harness.Workspace())
+	prepareProductionRepository(t, scenario)
+	makeProductionRepositoryDirty(t, scenario)
 	harness.SetBehavior(t, testpaseo.BehaviorCommitAndWork)
 
 	interruptedProcess := startProductionCommand(t, scenario)
 	sessionID := waitForOnlyOwnSession(t, scenario, interruptedProcess)
 	waitForCleanGit(t, scenario)
 	waitForRecordedCommand(t, scenario, "wait")
-	if err := interruptedProcess.command.Process.Signal(os.Interrupt); err != nil {
-		t.Fatalf("прервать production-команду после создания коммита: %v", err)
-	}
+	interruptedProcess.interrupt(t)
 	interrupted := interruptedProcess.wait(t)
 	if interrupted.exitCode != 130 {
 		t.Fatalf("прерванная после коммита команда вернула код %d вместо 130:\n%s", interrupted.exitCode, interrupted.output)
@@ -155,9 +186,10 @@ func TestProductionПользовательПолучаетБезопасный�
 	scenario := startProductionScenario(t)
 	harness := scenario.harness
 	harness.EnableCommandRecording(t)
-	prepareProductionRepository(t, harness.Workspace())
-	makeProductionRepositoryDirty(t, harness.Workspace())
+	prepareProductionRepository(t, scenario)
+	makeProductionRepositoryDirty(t, scenario)
 	writeProductionConfigWithoutNotifications(t, harness.Workspace())
+	before := captureProductionGitSnapshot(t, scenario)
 
 	result := runProductionCommand(t, scenario)
 	if result.exitCode != exitUsageOrConfiguration {
@@ -166,9 +198,8 @@ func TestProductionПользовательПолучаетБезопасный�
 	if !strings.Contains(result.output, "notifications.intervention") {
 		t.Fatalf("вывод не объясняет отсутствующий канал участия человека:\n%s", result.output)
 	}
-	if status := gitOutput(t, harness.Workspace(), "status", "--porcelain=v1"); status == "" {
-		t.Fatal("безопасный отказ неожиданно очистил Git")
-	}
+	after := captureProductionGitSnapshot(t, scenario)
+	assertProductionGitSnapshotEqual(t, before, after)
 	if prompts := harness.Prompts(t); len(prompts) != 0 {
 		t.Fatalf("безопасный отказ неожиданно создал поручение: %#v", prompts)
 	}
@@ -180,6 +211,20 @@ type productionCommandResult struct {
 	output   string
 }
 
+type productionGitSnapshot struct {
+	head           string
+	index          string
+	trackedStatus  string
+	trackedFiles   map[string]productionFileSnapshot
+	untrackedFiles map[string]productionFileSnapshot
+}
+
+type productionFileSnapshot struct {
+	exists  bool
+	mode    fs.FileMode
+	content string
+}
+
 type productionScenario struct {
 	context context.Context
 	harness *testpaseo.Harness
@@ -188,18 +233,18 @@ type productionScenario struct {
 
 type productionCommandProcess struct {
 	context context.Context
-	command *exec.Cmd
+	process *testpaseo.OwnedProcess
 	output  synchronizedBuffer
 }
 
 func startProductionScenario(t *testing.T) *productionScenario {
 	t.Helper()
-	harness := testpaseo.StartIsolated(t)
 	ctx, cancel := context.WithTimeout(context.Background(), productionIntegrationScenarioTimeout)
 	t.Cleanup(cancel)
 	if productionIntegrationBinary == "" {
 		t.Fatal("production-бинарник не собран общим стендом")
 	}
+	harness := testpaseo.StartIsolatedWithBinaries(t, ctx, productionIntegrationBinaries)
 	return &productionScenario{
 		context: ctx,
 		harness: harness,
@@ -215,8 +260,7 @@ func runProductionCommand(t *testing.T, scenario *productionScenario) production
 
 func startProductionCommand(t *testing.T, scenario *productionScenario) *productionCommandProcess {
 	t.Helper()
-	command := exec.CommandContext(
-		scenario.context,
+	command := exec.Command(
 		scenario.binary,
 		"prepare-commits",
 		"--change",
@@ -224,33 +268,34 @@ func startProductionCommand(t *testing.T, scenario *productionScenario) *product
 	)
 	command.Dir = scenario.harness.Workspace()
 	command.Env = scenario.harness.Environment()
-	process := &productionCommandProcess{context: scenario.context, command: command}
+	process := &productionCommandProcess{context: scenario.context}
 	command.Stdout = &process.output
 	command.Stderr = &process.output
-	if err := command.Start(); err != nil {
+	owned, err := testpaseo.StartOwnedProcess(command)
+	if err != nil {
 		t.Fatalf("запустить production-команду: %v", err)
 	}
+	process.process = owned
+	t.Cleanup(func() { process.cleanup(t) })
 	return process
 }
 
 func (process *productionCommandProcess) wait(t *testing.T) productionCommandResult {
 	t.Helper()
-	finished := make(chan error, 1)
-	go func() { finished <- process.command.Wait() }()
 	timer := time.NewTimer(productionIntegrationEventTimeout)
 	defer timer.Stop()
 	var err error
 	select {
-	case err = <-finished:
+	case <-process.process.Done():
+		err = process.process.WaitError()
 	case <-timer.C:
-		_ = process.command.Process.Kill()
-		<-finished
+		process.terminate(t)
 		t.Fatalf("production-команда не завершилась вовремя:\n%s", process.output.String())
 	case <-process.context.Done():
-		_ = process.command.Process.Kill()
-		<-finished
+		process.terminate(t)
 		t.Fatalf("истёк deadline пользовательского сценария: %v\n%s", process.context.Err(), process.output.String())
 	}
+	process.terminate(t)
 	exitCode := 0
 	if err != nil {
 		var exitError *exec.ExitError
@@ -262,17 +307,43 @@ func (process *productionCommandProcess) wait(t *testing.T) productionCommandRes
 	return productionCommandResult{exitCode: exitCode, output: process.output.String()}
 }
 
-func prepareProductionRepository(t *testing.T, root string) {
+func (process *productionCommandProcess) interrupt(t *testing.T) {
 	t.Helper()
-	runTool(t, root, "git", "init", "--initial-branch=main")
-	runTool(t, root, "openspec", "init", "--tools", "none", "--language", "ru", "--no-animation", "--no-copilot-cloud", ".")
-	runTool(t, root, "openspec", "new", "change", productionIntegrationChange, "--schema", "spec-driven", "--json")
+	if err := process.process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("прервать production-команду и её потомков: %v", err)
+	}
+}
+
+func (process *productionCommandProcess) terminate(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := process.process.TerminateAndWait(ctx); err != nil {
+		t.Fatalf("завершить production-команду и её потомков: %v", err)
+	}
+}
+
+func (process *productionCommandProcess) cleanup(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := process.process.TerminateAndWait(ctx); err != nil {
+		t.Errorf("освободить production-команду и её потомков: %v", err)
+	}
+}
+
+func prepareProductionRepository(t *testing.T, scenario *productionScenario) {
+	t.Helper()
+	root := scenario.harness.Workspace()
+	runTool(t, scenario, root, "git", "init", "--initial-branch=main")
+	runTool(t, scenario, root, "openspec", "init", "--tools", "none", "--language", "ru", "--no-animation", "--no-copilot-cloud", ".")
+	runTool(t, scenario, root, "openspec", "new", "change", productionIntegrationChange, "--schema", "spec-driven", "--json")
 	writeIntegrationFile(t, filepath.Join(root, "tracked.txt"), "исходное отслеживаемое содержимое\n")
 	writeIntegrationFile(t, filepath.Join(root, "staged.txt"), "исходное индексируемое содержимое\n")
 	writeIntegrationFile(t, filepath.Join(root, ".git", "info", "exclude"), config.FileName+"\n")
 	writeProductionConfig(t, root, testpaseo.ProviderID, testpaseo.ModelID, "")
-	runTool(t, root, "git", "add", "--all")
-	runTool(t, root, "git", "-c", "user.name=OpenSpec Apply Integration", "-c", "user.email=integration@example.invalid", "commit", "-m", "test: prepare integration repository")
+	runTool(t, scenario, root, "git", "add", "--all")
+	runTool(t, scenario, root, "git", "-c", "user.name=OpenSpec Apply Integration", "-c", "user.email=integration@example.invalid", "commit", "-m", "test: prepare integration repository")
 }
 
 func waitForOnlyOwnSession(
@@ -322,16 +393,15 @@ func readOwnSessionIDs(t *testing.T, harness *testpaseo.Harness) []activeSession
 
 func waitForCleanGit(t *testing.T, scenario *productionScenario) {
 	t.Helper()
-	root := scenario.harness.Workspace()
 	deadline := productionEventDeadline(t, scenario)
 	for time.Now().Before(deadline) {
-		if gitOutput(t, root, "status", "--porcelain=v1") == "" {
+		if gitOutput(t, scenario, "status", "--porcelain=v1") == "" {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	assertProductionScenarioActive(t, scenario)
-	t.Fatalf("агент не очистил Git:\n%s", gitOutput(t, root, "status", "--porcelain=v1"))
+	t.Fatalf("агент не очистил Git:\n%s", gitOutput(t, scenario, "status", "--porcelain=v1"))
 }
 
 func productionEventDeadline(t *testing.T, scenario *productionScenario) time.Time {
@@ -441,6 +511,120 @@ func assertNoPaseoMutations(t *testing.T, commands [][]string) {
 	}
 }
 
+func captureProductionGitSnapshot(t *testing.T, scenario *productionScenario) productionGitSnapshot {
+	t.Helper()
+	return productionGitSnapshot{
+		head:           gitOutput(t, scenario, "rev-parse", "HEAD"),
+		index:          string(gitRawOutput(t, scenario, "ls-files", "--stage", "-z")),
+		trackedStatus:  string(gitRawOutput(t, scenario, "status", "--porcelain=v1", "-z", "--untracked-files=no")),
+		trackedFiles:   captureProductionFiles(t, scenario, gitRawOutput(t, scenario, "ls-files", "-z")),
+		untrackedFiles: captureProductionFiles(t, scenario, gitRawOutput(t, scenario, "ls-files", "--others", "--exclude-standard", "-z")),
+	}
+}
+
+func assertProductionGitSnapshotEqual(
+	t *testing.T,
+	before productionGitSnapshot,
+	after productionGitSnapshot,
+) {
+	t.Helper()
+	if before.head != after.head {
+		t.Fatalf("безопасный отказ изменил HEAD: было %s, стало %s", before.head, after.head)
+	}
+	if before.index != after.index {
+		t.Fatal("безопасный отказ изменил логическое содержимое index")
+	}
+	if before.trackedStatus != after.trackedStatus {
+		t.Fatalf(
+			"безопасный отказ изменил состояние tracked-файлов: было %q, стало %q",
+			before.trackedStatus,
+			after.trackedStatus,
+		)
+	}
+	if !reflect.DeepEqual(before.trackedFiles, after.trackedFiles) {
+		t.Fatalf(
+			"безопасный отказ изменил содержимое tracked-файлов: %v",
+			productionChangedFiles(before.trackedFiles, after.trackedFiles),
+		)
+	}
+	if !reflect.DeepEqual(before.untrackedFiles, after.untrackedFiles) {
+		t.Fatalf(
+			"безопасный отказ изменил набор или содержимое untracked-файлов: %v",
+			productionChangedFiles(before.untrackedFiles, after.untrackedFiles),
+		)
+	}
+}
+
+func captureProductionFiles(
+	t *testing.T,
+	scenario *productionScenario,
+	nulSeparatedPaths []byte,
+) map[string]productionFileSnapshot {
+	t.Helper()
+	root := scenario.harness.Workspace()
+	files := make(map[string]productionFileSnapshot)
+	for _, rawPath := range bytes.Split(nulSeparatedPaths, []byte{0}) {
+		if len(rawPath) == 0 {
+			continue
+		}
+		path := string(rawPath)
+		if filepath.IsAbs(path) || filepath.Clean(path) == ".." || strings.HasPrefix(filepath.Clean(path), ".."+string(os.PathSeparator)) {
+			t.Fatalf("Git вернул путь вне рабочего дерева: %q", path)
+		}
+		fullPath := filepath.Join(root, path)
+		information, err := os.Lstat(fullPath)
+		if errors.Is(err, fs.ErrNotExist) {
+			files[path] = productionFileSnapshot{}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("прочитать состояние %s: %v", path, err)
+		}
+		var content []byte
+		if information.Mode()&os.ModeSymlink != 0 {
+			target, readErr := os.Readlink(fullPath)
+			if readErr != nil {
+				t.Fatalf("прочитать ссылку %s: %v", path, readErr)
+			}
+			content = []byte(target)
+		} else {
+			content, err = os.ReadFile(fullPath)
+			if err != nil {
+				t.Fatalf("прочитать содержимое %s: %v", path, err)
+			}
+		}
+		files[path] = productionFileSnapshot{
+			exists:  true,
+			mode:    information.Mode(),
+			content: string(content),
+		}
+	}
+	return files
+}
+
+func productionChangedFiles(
+	before map[string]productionFileSnapshot,
+	after map[string]productionFileSnapshot,
+) []string {
+	changed := make(map[string]struct{})
+	for path, beforeFile := range before {
+		if afterFile, found := after[path]; !found || beforeFile != afterFile {
+			changed[path] = struct{}{}
+		}
+	}
+	for path, afterFile := range after {
+		if beforeFile, found := before[path]; !found || beforeFile != afterFile {
+			changed[path] = struct{}{}
+		}
+	}
+	paths := make([]string, 0, len(changed))
+	for path := range changed {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
 func assertOnlyOwnSession(t *testing.T, harness *testpaseo.Harness, expectedID string) {
 	t.Helper()
 	sessions := readOwnSessionIDs(t, harness)
@@ -491,13 +675,14 @@ func containsArgumentPair(arguments []string, key, value string) bool {
 	return false
 }
 
-func makeProductionRepositoryDirty(t *testing.T, root string) {
+func makeProductionRepositoryDirty(t *testing.T, scenario *productionScenario) {
 	t.Helper()
+	root := scenario.harness.Workspace()
 	writeIntegrationFile(t, filepath.Join(root, "tracked.txt"), "изменённое отслеживаемое содержимое\n")
 	writeIntegrationFile(t, filepath.Join(root, "staged.txt"), "изменённое индексируемое содержимое\n")
-	runTool(t, root, "git", "add", "staged.txt")
+	runTool(t, scenario, root, "git", "add", "staged.txt")
 	writeIntegrationFile(t, filepath.Join(root, "untracked.txt"), "новое неотслеживаемое содержимое\n")
-	status := gitOutput(t, root, "status", "--porcelain=v1")
+	status := gitOutput(t, scenario, "status", "--porcelain=v1")
 	for _, expected := range []string{" M tracked.txt", "M  staged.txt", "?? untracked.txt"} {
 		if !strings.Contains(status, expected) {
 			t.Fatalf("стенд не создал состояние %q:\n%s", expected, status)
@@ -552,24 +737,34 @@ func writeIntegrationFile(t *testing.T, path, content string) {
 	}
 }
 
-func runTool(t *testing.T, directory, name string, arguments ...string) {
+func runTool(t *testing.T, scenario *productionScenario, directory, name string, arguments ...string) {
 	t.Helper()
 	command := exec.Command(name, arguments...)
 	command.Dir = directory
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("выполнить %s %s: %v\n%s", name, strings.Join(arguments, " "), err, output)
+	var output strings.Builder
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := testpaseo.RunOwnedCommand(scenario.context, command); err != nil {
+		t.Fatalf("выполнить %s %s: %v\n%s", name, strings.Join(arguments, " "), err, output.String())
 	}
 }
 
-func gitOutput(t *testing.T, root string, arguments ...string) string {
+func gitOutput(t *testing.T, scenario *productionScenario, arguments ...string) string {
+	t.Helper()
+	return strings.TrimSpace(string(gitRawOutput(t, scenario, arguments...)))
+}
+
+func gitRawOutput(t *testing.T, scenario *productionScenario, arguments ...string) []byte {
 	t.Helper()
 	command := exec.Command("git", arguments...)
-	command.Dir = root
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("прочитать Git через git %s: %v\n%s", strings.Join(arguments, " "), err, output)
+	command.Dir = scenario.harness.Workspace()
+	var output bytes.Buffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := testpaseo.RunOwnedCommand(scenario.context, command); err != nil {
+		t.Fatalf("прочитать Git через git %s: %v\n%s", strings.Join(arguments, " "), err, output.Bytes())
 	}
-	return strings.TrimSpace(string(output))
+	return output.Bytes()
 }
 
 func promptsPackageText() string {
