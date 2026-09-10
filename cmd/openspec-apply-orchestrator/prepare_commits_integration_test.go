@@ -386,12 +386,13 @@ func TestProductionКомандаОтклоняетНедостоверныеВ�
 	}
 }
 
-func TestProductionКомандаСохраняетСессиюПриПрепятствии(t *testing.T) {
+func TestProductionКомандаСохраняетИлиЯвноЗакрываетСессиюПриПрепятствии(t *testing.T) {
 	t.Parallel()
 	binary := buildProductionCommand(t)
 	tests := []struct {
 		name           string
 		behavior       testpaseo.Behavior
+		manualClose    bool
 		fault          string
 		faultAfterWait string
 		wantFragment   string
@@ -400,16 +401,19 @@ func TestProductionКомандаСохраняетСессиюПриПрепя�
 		{
 			name:         "грязный Git после хода",
 			behavior:     testpaseo.BehaviorFinish,
+			manualClose:  true,
 			wantFragment: "ход агента завершён, но Git остаётся изменённым",
 		},
 		{
 			name:         "ошибка агента",
 			behavior:     testpaseo.BehaviorError,
+			manualClose:  true,
 			wantFragment: "агент сообщил об ошибке",
 		},
 		{
 			name:         "неожиданный запрос разрешения",
 			behavior:     testpaseo.BehaviorPermission,
+			manualClose:  true,
 			wantFragment: "Paseo запросил разрешение",
 		},
 		{
@@ -434,18 +438,31 @@ func TestProductionКомандаСохраняетСессиюПриПрепя�
 			harness.EnableCommandRecording(t)
 			harness.SetCommandFault(t, test.fault)
 			prepareProductionRepository(t, harness.Workspace())
+			var receiver *integrationNtfyReceiver
+			if test.manualClose {
+				receiver = startIntegrationNtfyReceiver(t)
+				writeProductionConfigWithNotification(t, harness.Workspace(), receiver.URL(), "high")
+			}
 			makeProductionRepositoryDirty(t, harness.Workspace())
 			harness.SetBehavior(t, test.behavior)
 
 			var result productionCommandResult
-			if test.faultAfterWait == "" {
-				result = runProductionCommand(t, binary, harness)
-			} else {
+			switch {
+			case test.faultAfterWait != "":
 				process := startProductionCommand(t, binary, harness)
 				waitForRecordedCommand(t, harness, "wait")
 				harness.SetCommandFault(t, test.faultAfterWait)
 				harness.SetBehavior(t, testpaseo.BehaviorFinish)
 				result = process.wait(t)
+			case test.manualClose:
+				process := startProductionCommand(t, binary, harness)
+				sessionID := waitForOnlyOwnSession(t, harness, process)
+				waitForOutput(t, &process.output, test.wantFragment)
+				receiver.WaitRequest(t)
+				harness.RunCLI(t, "archive", sessionID, "--force", "--json")
+				result = process.wait(t)
+			default:
+				result = runProductionCommand(t, binary, harness)
 			}
 			if result.exitCode != exitObstacle || !strings.Contains(result.output, test.wantFragment) {
 				t.Fatalf(
@@ -458,9 +475,16 @@ func TestProductionКомандаСохраняетСессиюПриПрепя�
 			}
 			commands := harness.RecordedCommands(t)
 			assertCommandCount(t, commands, "run", 1)
-			assertCommandCount(t, commands, "archive", 0)
-			if sessions := readOwnSessionIDs(t, harness); len(sessions) != 1 {
-				t.Fatalf("препятствие не сохранило одну собственную сессию: %#v", sessions)
+			if test.manualClose {
+				assertCommandCount(t, commands, "archive", 0)
+				if sessions := readOwnSessionIDs(t, harness); len(sessions) != 0 {
+					t.Fatalf("закрытая вручную сессия осталась активной: %#v", sessions)
+				}
+			} else {
+				assertCommandCount(t, commands, "archive", 0)
+				if sessions := readOwnSessionIDs(t, harness); len(sessions) != 1 {
+					t.Fatalf("препятствие не сохранило одну собственную сессию: %#v", sessions)
+				}
 			}
 		})
 	}

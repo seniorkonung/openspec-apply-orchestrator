@@ -156,6 +156,78 @@ func TestProductionКомандаПродолжаетТуЖеСессиюПос�
 	}
 }
 
+func TestProductionКомандаСоздаётНовуюПопыткуПослеЗакрытияСГрязнымGit(t *testing.T) {
+	t.Parallel()
+	harness := startProductionHarness(t)
+	harness.EnableCommandRecording(t)
+	prepareProductionRepository(t, harness.Workspace())
+	receiver := startIntegrationNtfyReceiver(t)
+	writeProductionConfigWithNotification(t, harness.Workspace(), receiver.URL(), "high")
+	makeProductionRepositoryDirty(t, harness.Workspace())
+	harness.SetBehavior(t, testpaseo.BehaviorWorking)
+	binary := buildProductionCommand(t)
+
+	firstProcess := startProductionCommand(t, binary, harness)
+	firstSessionID := waitForOnlyOwnSession(t, harness, firstProcess)
+	waitForRecordedCommandEvent(t, harness, testpaseo.CommandStarted, "wait")
+	harness.SetBehavior(t, testpaseo.BehaviorFinish)
+	request := receiver.WaitRequest(t)
+	if err := validateIntegrationNtfyRequest(request, expectedIntegrationNtfyRequest{
+		change:      productionIntegrationChange,
+		message:     "После хода агента в Git остались незакоммиченные изменения.",
+		sessionID:   firstSessionID,
+		sessionLink: integrationSessionLink(t, harness, firstSessionID),
+		priority:    config.NtfyPriorityHigh,
+	}); err != nil {
+		t.Fatalf("ntfy-запрос не соответствует контракту: %v\nзапрос: %#v", err, request)
+	}
+
+	harness.RunCLI(t, "archive", firstSessionID, "--json")
+	firstResult := firstProcess.wait(t)
+	if firstResult.exitCode != exitObstacle {
+		t.Fatalf(
+			"закрытая при грязном Git команда завершилась с кодом %d вместо %d:\n%s",
+			firstResult.exitCode,
+			exitObstacle,
+			firstResult.output,
+		)
+	}
+	if !strings.Contains(
+		firstResult.output,
+		"Сессия "+firstSessionID+" закрыта, но Git содержит незакоммиченные изменения.",
+	) {
+		t.Fatalf("вывод не сообщает о закрытии с грязным Git:\n%s", firstResult.output)
+	}
+	if status := gitOutput(t, harness.Workspace(), "status", "--porcelain=v1"); status == "" {
+		t.Fatal("закрытие сессии неожиданно очистило Git")
+	}
+	assertSessionArchived(t, harness, firstSessionID)
+
+	harness.ResetCommandRecording(t)
+	harness.SetBehavior(t, testpaseo.BehaviorWorking)
+	secondProcess := startProductionCommand(t, binary, harness)
+	secondSessionID := waitForOnlyOwnSession(t, harness, secondProcess)
+	waitForRecordedCommandEvent(t, harness, testpaseo.CommandStarted, "wait")
+	if secondSessionID == firstSessionID {
+		t.Fatalf("новая явная попытка восстановила закрытую сессию %s", firstSessionID)
+	}
+	assertCommandCount(t, harness.RecordedCommands(t), "run", 1)
+	receiver.AssertNoRequest(t)
+
+	prompts := harness.Prompts(t)
+	if len(prompts) != 2 ||
+		strings.TrimSpace(prompts[0]) != strings.TrimSpace(promptsPackageText()) ||
+		strings.TrimSpace(prompts[1]) != strings.TrimSpace(promptsPackageText()) {
+		t.Fatalf("новая попытка не получила новое исходное поручение: %#v", prompts)
+	}
+	if err := secondProcess.command.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("прервать новую явную попытку: %v", err)
+	}
+	if result := secondProcess.wait(t); result.exitCode != 130 {
+		t.Fatalf("прерванная новая попытка вернула код %d вместо 130:\n%s", result.exitCode, result.output)
+	}
+}
+
 type capturedIntegrationNtfyRequest struct {
 	method        string
 	title         string
