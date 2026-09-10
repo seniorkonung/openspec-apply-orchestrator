@@ -85,11 +85,31 @@ type InterventionChannelType string
 
 const InterventionChannelTypeNtfy InterventionChannelType = "ntfy"
 
+type NtfyPriority string
+
+const (
+	NtfyPriorityMin     NtfyPriority = "min"
+	NtfyPriorityLow     NtfyPriority = "low"
+	NtfyPriorityDefault NtfyPriority = "default"
+	NtfyPriorityHigh    NtfyPriority = "high"
+	NtfyPriorityMax     NtfyPriority = "max"
+)
+
+func (priority NtfyPriority) valid() bool {
+	switch priority {
+	case NtfyPriorityMin, NtfyPriorityLow, NtfyPriorityDefault, NtfyPriorityHigh, NtfyPriorityMax:
+		return true
+	default:
+		return false
+	}
+}
+
 type InterventionChannel struct {
 	channelType InterventionChannelType
 	url         string
 	tokenEnv    string
 	hasTokenEnv bool
+	priority    NtfyPriority
 }
 
 func (channel InterventionChannel) Type() InterventionChannelType {
@@ -102,6 +122,10 @@ func (channel InterventionChannel) URL() string {
 
 func (channel InterventionChannel) TokenEnvironment() (string, bool) {
 	return channel.tokenEnv, channel.hasTokenEnv
+}
+
+func (channel InterventionChannel) Priority() NtfyPriority {
+	return channel.priority
 }
 
 type Config struct {
@@ -323,7 +347,7 @@ func decodeInterventionChannel(raw []byte) (InterventionChannel, error) {
 	if err != nil {
 		return InterventionChannel{}, err
 	}
-	if err := validateObjectFields(channel, channelPath, []string{"type", "url", "tokenEnv"}, []string{"type", "url"}); err != nil {
+	if err := validateObjectFields(channel, channelPath, []string{"type", "url", "tokenEnv", "priority"}, []string{"type", "url"}); err != nil {
 		return InterventionChannel{}, err
 	}
 	channelType, err := decodeString(channel["type"], channelPath+".type")
@@ -337,6 +361,7 @@ func decodeInterventionChannel(raw []byte) (InterventionChannel, error) {
 	intervention := InterventionChannel{
 		channelType: InterventionChannelTypeNtfy,
 		url:         address,
+		priority:    NtfyPriorityDefault,
 	}
 	if rawTokenEnvironment, present := channel["tokenEnv"]; present {
 		tokenEnvironment, err := decodeString(rawTokenEnvironment, channelPath+".tokenEnv")
@@ -345,6 +370,14 @@ func decodeInterventionChannel(raw []byte) (InterventionChannel, error) {
 		}
 		intervention.tokenEnv = tokenEnvironment
 		intervention.hasTokenEnv = true
+	}
+	if rawPriority, present := channel["priority"]; present {
+		priorityValue, err := decodeString(rawPriority, channelPath+".priority")
+		priority := NtfyPriority(priorityValue)
+		if err != nil || !priority.valid() {
+			return InterventionChannel{}, fieldError(channelPath+".priority", ErrInvalidValue)
+		}
+		intervention.priority = priority
 	}
 	return intervention, nil
 }

@@ -23,7 +23,8 @@ func TestПолнаяКонфигурацияСохраняетНепровер�
     "intervention": {
       "type": "ntfy",
       "url": "https://ntfy.example.invalid/project-topic",
-      "tokenEnv": "PROJECT_NTFY_TOKEN"
+      "tokenEnv": "PROJECT_NTFY_TOKEN",
+      "priority": "high"
     }
   }
 }`)
@@ -52,9 +53,12 @@ func TestПолнаяКонфигурацияСохраняетНепровер�
 	if tokenEnv, present := channel.TokenEnvironment(); !present || tokenEnv != "PROJECT_NTFY_TOKEN" {
 		t.Fatalf("неожиданное имя переменной токена: %q, present=%v", tokenEnv, present)
 	}
+	if channel.Priority() != NtfyPriorityHigh {
+		t.Fatalf("неожиданный приоритет ntfy: %q", channel.Priority())
+	}
 }
 
-func TestНеобязательныеReasoningИТокенНеПодменяютсяDefault(t *testing.T) {
+func TestНеобязательныеReasoningИТокенСохраняютСвоёОтсутствиеАПriorityПолучаетDefault(t *testing.T) {
 	root := newRepositoryRoot(t)
 	writeConfig(t, root, `{
   "version": 1,
@@ -81,6 +85,37 @@ func TestНеобязательныеReasoningИТокенНеПодменяют
 	}
 	if tokenEnvironment, present := loaded.InterventionChannel().TokenEnvironment(); present || tokenEnvironment != "" {
 		t.Fatalf("tokenEnv не должен появляться по умолчанию: %q, present=%v", tokenEnvironment, present)
+	}
+	if loaded.InterventionChannel().Priority() != NtfyPriorityDefault {
+		t.Fatalf("отсутствующий priority должен разрешаться в default, получено %q", loaded.InterventionChannel().Priority())
+	}
+}
+
+func TestКаналNtfyПринимаетТолькоПятьКаноническихПриоритетов(t *testing.T) {
+	tests := []struct {
+		value string
+		want  NtfyPriority
+	}{
+		{value: "min", want: NtfyPriorityMin},
+		{value: "low", want: NtfyPriorityLow},
+		{value: "default", want: NtfyPriorityDefault},
+		{value: "high", want: NtfyPriorityHigh},
+		{value: "max", want: NtfyPriorityMax},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			root := newRepositoryRoot(t)
+			writeConfig(t, root, `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic","priority":"`+tt.value+`"}}}`)
+
+			loaded, err := Read(root)
+			if err != nil {
+				t.Fatalf("прочитать приоритет %q: %v", tt.value, err)
+			}
+			if got := loaded.InterventionChannel().Priority(); got != tt.want {
+				t.Fatalf("ожидался приоритет %q, получен %q", tt.want, got)
+			}
+		})
 	}
 }
 
@@ -228,6 +263,18 @@ func TestОбязательныеПоляИНекорректныеЗначен�
 			expected: ErrInvalidValue,
 			path:     "notifications.intervention.tokenEnv",
 		},
+		{
+			name:     "приоритет не входит в закрытый набор",
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic","priority":"urgent"}}}`,
+			expected: ErrInvalidValue,
+			path:     "notifications.intervention.priority",
+		},
+		{
+			name:     "приоритет имеет числовой тип",
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic","priority":5}}}`,
+			expected: ErrInvalidValue,
+			path:     "notifications.intervention.priority",
+		},
 	}
 
 	for _, tt := range tests {
@@ -332,7 +379,8 @@ func TestСнимокНеПеречитываетИзменившийсяФай�
     "intervention": {
       "type": "ntfy",
       "url": "https://ntfy.example.invalid/original-topic",
-      "tokenEnv": "ORIGINAL_NTFY_TOKEN"
+      "tokenEnv": "ORIGINAL_NTFY_TOKEN",
+      "priority": "high"
     }
   }
 }`)
@@ -349,7 +397,8 @@ func TestСнимокНеПеречитываетИзменившийсяФай�
   "notifications": {
     "intervention": {
       "type": "ntfy",
-      "url": "https://ntfy.example.invalid/changed-topic"
+      "url": "https://ntfy.example.invalid/changed-topic",
+      "priority": "max"
     }
   }
 }`)
@@ -374,6 +423,9 @@ func TestСнимокНеПеречитываетИзменившийсяФай�
 	}
 	if tokenEnvironment, present := channel.TokenEnvironment(); !present || tokenEnvironment != "ORIGINAL_NTFY_TOKEN" {
 		t.Fatalf("снимок подменил tokenEnv после изменения файла: %q, present=%v", tokenEnvironment, present)
+	}
+	if channel.Priority() != NtfyPriorityHigh {
+		t.Fatalf("снимок подменил priority после изменения файла: %q", channel.Priority())
 	}
 }
 
