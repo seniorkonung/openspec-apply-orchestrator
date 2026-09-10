@@ -95,6 +95,67 @@ func TestProductionКомандаДоставляетКаждуюПричину�
 	}
 }
 
+func TestProductionКомандаПродолжаетТуЖеСессиюПослеУведомления(t *testing.T) {
+	t.Parallel()
+	harness := startProductionHarness(t)
+	harness.EnableCommandRecording(t)
+	prepareProductionRepository(t, harness.Workspace())
+	receiver := startIntegrationNtfyReceiver(t)
+	writeProductionConfigWithNotification(t, harness.Workspace(), receiver.URL(), "high")
+	makeProductionRepositoryDirty(t, harness.Workspace())
+	harness.SetBehavior(t, testpaseo.BehaviorWorking)
+
+	process := startProductionCommand(t, buildProductionCommand(t), harness)
+	sessionID := waitForOnlyOwnSession(t, harness, process)
+	waitForRecordedCommandEvent(t, harness, testpaseo.CommandStarted, "wait")
+	harness.SetBehavior(t, testpaseo.BehaviorFinish)
+	request := receiver.WaitRequest(t)
+	if err := validateIntegrationNtfyRequest(request, expectedIntegrationNtfyRequest{
+		change:      productionIntegrationChange,
+		message:     "После хода агента в Git остались незакоммиченные изменения.",
+		sessionID:   sessionID,
+		sessionLink: integrationSessionLink(t, harness, sessionID),
+		priority:    config.NtfyPriorityHigh,
+	}); err != nil {
+		t.Fatalf("ntfy-запрос не соответствует контракту: %v\nзапрос: %#v", err, request)
+	}
+
+	const followUp = "Продолжить подготовку коммитов в той же сессии"
+	harness.SetBehavior(t, testpaseo.BehaviorDelayedFinish)
+	harness.RunCLI(t, "send", sessionID, followUp, "--no-wait", "--json")
+	waitForRecordedCommandEventCount(t, harness, testpaseo.CommandStarted, "wait", 2)
+	if err := validateInterventionContinuationEvents(harness.RecordedCommandEvents(t), sessionID); err != nil {
+		t.Fatalf("переход от idle к продолжению нарушен: %v\nсобытия: %#v", err, harness.RecordedCommandEvents(t))
+	}
+
+	runTool(t, harness.Workspace(), "git", "add", "--all")
+	runTool(
+		t,
+		harness.Workspace(),
+		"git",
+		"-c", "user.name=OpenSpec Apply Integration",
+		"-c", "user.email=integration@example.invalid",
+		"commit", "-m", "test: complete continued intervention",
+	)
+	waitForRecordedCommandEventCount(t, harness, testpaseo.CommandFinished, "wait", 2)
+	harness.RunCLI(t, "archive", sessionID, "--json")
+	result := process.wait(t)
+	if result.exitCode != exitSuccess {
+		t.Fatalf("продолженная production-команда завершилась с кодом %d:\n%s", result.exitCode, result.output)
+	}
+	if status := gitOutput(t, harness.Workspace(), "status", "--porcelain=v1"); status != "" {
+		t.Fatalf("после продолжения Git остался изменённым:\n%s", status)
+	}
+	assertSessionArchived(t, harness, sessionID)
+	assertCommandCount(t, harness.RecordedCommands(t), "run", 1)
+	receiver.AssertNoRequest(t)
+
+	prompts := harness.Prompts(t)
+	if len(prompts) != 2 || strings.TrimSpace(prompts[1]) != followUp {
+		t.Fatalf("продолжение не доставлено тому же агенту: %#v", prompts)
+	}
+}
+
 type capturedIntegrationNtfyRequest struct {
 	method        string
 	title         string
@@ -236,4 +297,89 @@ func writeProductionConfigWithNotification(t *testing.T, root, address, priority
 }
 `, testpaseo.ProviderID, testpaseo.ModelID, address, priorityField)
 	writeIntegrationFile(t, filepath.Join(root, config.FileName), content)
+}
+
+func waitForRecordedCommandEventCount(
+	t *testing.T,
+	harness *testpaseo.Harness,
+	phase testpaseo.CommandPhase,
+	name string,
+	want int,
+) {
+	t.Helper()
+	deadline := time.Now().Add(productionIntegrationEventTimeout)
+	for time.Now().Before(deadline) {
+		if countCommandEvents(harness.RecordedCommandEvents(t), phase, name) >= want {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf(
+		"не дождаться %d событий %q команды %q: %#v",
+		want,
+		phase,
+		name,
+		harness.RecordedCommandEvents(t),
+	)
+}
+
+func countCommandEvents(events []testpaseo.CommandEvent, phase testpaseo.CommandPhase, name string) int {
+	count := 0
+	for _, event := range events {
+		if event.Phase == phase && hasCommandPrefix(event.Arguments, name) {
+			count++
+		}
+	}
+	return count
+}
+
+func validateInterventionContinuationEvents(events []testpaseo.CommandEvent, sessionID string) error {
+	firstWait := commandEventIndex(events, testpaseo.CommandStarted, "wait", 0)
+	firstFinish := commandEventIndex(events, testpaseo.CommandFinished, "wait", firstWait+1)
+	secondWait := commandEventIndex(events, testpaseo.CommandStarted, "wait", firstFinish+1)
+	if firstWait < 0 || firstFinish < 0 || secondWait < 0 {
+		return fmt.Errorf("не зафиксированы завершение первого и начало второго wait")
+	}
+	if !containsArgument(events[firstWait].Arguments, sessionID) ||
+		!containsArgument(events[firstFinish].Arguments, sessionID) ||
+		!containsArgument(events[secondWait].Arguments, sessionID) {
+		return fmt.Errorf("wait относится не к одной сессии %s", sessionID)
+	}
+	if countCommandEvents(events, testpaseo.CommandStarted, "wait") != 2 {
+		return fmt.Errorf("ожидалось ровно два запуска wait")
+	}
+
+	observations := make([][]string, 0, 8)
+	for _, event := range events[firstFinish+1 : secondWait] {
+		if event.Phase != testpaseo.CommandStarted {
+			continue
+		}
+		if hasCommandPrefix(event.Arguments, "workspace", "ls") ||
+			hasCommandPrefix(event.Arguments, "ls") ||
+			hasCommandPrefix(event.Arguments, "inspect") {
+			observations = append(observations, event.Arguments)
+		}
+	}
+	want := [][]string{
+		{"workspace", "ls"}, {"ls"}, {"ls"}, {"inspect"},
+		{"workspace", "ls"}, {"ls"}, {"ls"}, {"inspect"},
+	}
+	if len(observations) != len(want) {
+		return fmt.Errorf("ожидалось два ограниченных наблюдения, получено %#v", observations)
+	}
+	for index := range want {
+		if !hasCommandPrefix(observations[index], want[index]...) {
+			return fmt.Errorf("наблюдение %d ожидало %q, получено %#v", index+1, want[index], observations[index])
+		}
+	}
+	if argumentCount(observations[1], "--label") != 2 ||
+		argumentCount(observations[2], "--label") != 5 ||
+		argumentCount(observations[5], "--label") != 2 ||
+		argumentCount(observations[6], "--label") != 5 {
+		return fmt.Errorf("ожидались широкий и точный фильтры каждой пары ls")
+	}
+	if !containsArgument(observations[3], sessionID) || !containsArgument(observations[7], sessionID) {
+		return fmt.Errorf("inspect относится не к сессии %s", sessionID)
+	}
+	return nil
 }

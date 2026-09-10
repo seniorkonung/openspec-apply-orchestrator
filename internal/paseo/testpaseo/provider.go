@@ -145,6 +145,9 @@ func (provider *providerServer) runPrompt(id json.RawMessage, sessionID string) 
 			time.Sleep(50 * time.Millisecond)
 		case BehaviorError:
 			return provider.respondError(id, -32000, "управляемая ошибка тестового провайдера")
+		case BehaviorDelayedFinish:
+			time.Sleep(40 * time.Second)
+			return provider.respond(id, map[string]string{"stopReason": "end_turn"})
 		default:
 			return fmt.Errorf("неизвестное поведение тестового провайдера: %q", behavior)
 		}

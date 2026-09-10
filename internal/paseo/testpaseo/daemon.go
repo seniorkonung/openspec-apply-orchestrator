@@ -68,6 +68,7 @@ const (
 	BehaviorCommitAndWork Behavior = "commit-and-work"
 	BehaviorPermission    Behavior = "permission"
 	BehaviorError         Behavior = "error"
+	BehaviorDelayedFinish Behavior = "delayed-finish"
 )
 
 type DriverOperation string
@@ -262,7 +263,8 @@ func (harness *Harness) Environment() []string {
 func (harness *Harness) SetBehavior(t *testing.T, behavior Behavior) {
 	t.Helper()
 	switch behavior {
-	case BehaviorWorking, BehaviorFinish, BehaviorCommit, BehaviorCommitAndWork, BehaviorPermission, BehaviorError:
+	case BehaviorWorking, BehaviorFinish, BehaviorCommit, BehaviorCommitAndWork,
+		BehaviorPermission, BehaviorError, BehaviorDelayedFinish:
 	default:
 		t.Fatalf("неизвестное поведение тестового провайдера: %q", behavior)
 	}
