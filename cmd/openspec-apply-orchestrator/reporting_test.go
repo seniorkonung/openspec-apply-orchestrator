@@ -9,6 +9,7 @@ import (
 
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/notify"
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/orchestrator"
+	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo"
 )
 
 func TestPrepareCommitsПодробныйРежимДобавляетТехническиеРезультаты(t *testing.T) {
@@ -163,6 +164,33 @@ func TestРепортёрНеНазываетНовуюПотребностьП�
 	}
 	if strings.Contains(output.String(), "Повторяю доставку уведомления") {
 		t.Fatalf("новый эпизод ошибочно назван повтором: %s", output.String())
+	}
+}
+
+func TestРепортёрПредпочитаетСмыслНеопределённойМутацииНизкоуровневойПричине(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "создание сессии",
+			err:  errors.Join(paseo.ErrRunOutcomeUnknown, paseo.ErrEmptyOutput),
+			want: paseo.ErrRunOutcomeUnknown.Error(),
+		},
+		{
+			name: "архивирование сессии",
+			err:  errors.Join(paseo.ErrArchiveOutcomeUnknown, paseo.ErrCommandExit),
+			want: paseo.ErrArchiveOutcomeUnknown.Error(),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := publicErrorText(test.err); got != test.want {
+				t.Fatalf("публичная ошибка %q, ожидалась %q", got, test.want)
+			}
+		})
 	}
 }
 
