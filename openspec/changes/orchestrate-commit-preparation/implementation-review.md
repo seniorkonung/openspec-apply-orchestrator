@@ -3,47 +3,90 @@
 ## Assessment
 
 **Format version:** 1
-**Result:** No unresolved findings
+**Result:** Changes needed
 **Coverage status:** Complete
-**Summary:** Оставшиеся пробелы сквозного доказательства задачи 2.8 имеют конкретных владельцев в задачах 2.23–2.25; активных findings не осталось.
+**Summary:** Задача 3.16 не полностью подтверждена: deadline и cleanup не владеют полным жизненным циклом сценария (F1), тест подготовки объединяет две истории (F2), helper-бинарники собираются повторно (F5), а безопасный отказ не доказывает неизменность Git (F3).
 
 ## Review target
 
 - **Baseline ref:** origin/main
-- **Base commit:** 3fc6f70d96a833a7cfd6d978134c8d9454016575
-- **Reviewed head:** a143f1e96ac3572e86521286e5a338437ec6da1c
-- **Target commits:** ["726802a382905485d173298b06508e4bfea693a9", "a143f1e96ac3572e86521286e5a338437ec6da1c"]
-- **Reviewable paths:** ["cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go", "docs/adr/0002-go-core-with-paseo-protocol-adapter.md", "docs/adr/README.md", "docs/development/paseo-compatibility.md", "internal/paseo/integration_creation.go", "internal/paseo/settings.go", "internal/testpaseo/cmd/paseoproxy/main.go", "internal/testpaseo/cmd/reconcile/main.go", "internal/testpaseo/daemon.go", "internal/testpaseo/provider.go", "openspec/changes/orchestrate-commit-preparation/adr.md", "openspec/changes/orchestrate-commit-preparation/design.md", "openspec/changes/orchestrate-commit-preparation/plan.md", "openspec/changes/orchestrate-commit-preparation/tasks.md"]
+- **Base commit:** 326f4bcbd636b40feae36069b913d79cbac9e141
+- **Reviewed head:** 07367033e9f135ee72c7201b6303dcbaa2c70a71
+- **Target commits:** ["6d1381b1e30199c17cca2416ddd222e3acd7407e", "bae40894809eed5926e2290275340a426ed9533d", "01093e0254a07f1308ba1053ff39baa21ee653da", "439da2c7f12f5fd9d0f52094c0755dd484c7e1ba", "b5b89257097cc46369f25e2b9d53cfdbae1793be", "33ddc93ce73d58dad478a30b6dd1aa7c214e26b9", "54581c070845863fd622a61582090d68760dd3b8", "58b1128ebdf97f6c8dfa438d8f988273d1cb8743", "2abfb7d31bcaf9e79704f6fb8918c8952093bb23", "07367033e9f135ee72c7201b6303dcbaa2c70a71"]
+- **Reviewable paths:** ["cmd/openspec-apply-orchestrator/prepare_commits_delivery_integration_test.go", "cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go", "cmd/openspec-apply-orchestrator/prepare_commits_intervention_integration_test.go", "cmd/openspec-apply-orchestrator/prepare_commits_wait_integration_test.go", "docs/adr/0004-system-tests-cover-user-journeys.md", "docs/adr/README.md", "docs/development/paseo-compatibility.md", "docs/development/paseo-upgrade.md", "docs/development/testing.md", "internal/orchestrator/recovery_integration_test.go", "internal/paseo/recovery_integration_test.go", "internal/paseo/testpaseo/cmd/reconcile/main.go", "internal/paseo/testpaseo/daemon.go", "mise.toml", "openspec/changes/orchestrate-commit-preparation/adr.md", "openspec/changes/orchestrate-commit-preparation/design.md", "openspec/changes/orchestrate-commit-preparation/plan.md", "openspec/changes/orchestrate-commit-preparation/tasks.md"]
 - **OpenSpec change:** orchestrate-commit-preparation
 - **OpenSpec schema:** intent-driven
 - **Target scope:** Complete pre-push range
 - **Baseline freshness:** Local ref state; no fetch performed
-- **Planning evidence paths:** ["docs/adr/0002-go-core-with-paseo-protocol-adapter.md", "docs/adr/README.md", "openspec/changes/orchestrate-commit-preparation/adr.md", "openspec/changes/orchestrate-commit-preparation/design.md", "openspec/changes/orchestrate-commit-preparation/plan.md", "openspec/changes/orchestrate-commit-preparation/tasks.md"]
-- **Excluded worktree state:** ["openspec/changes/orchestrate-commit-preparation/review.md — появился после обнаружения цели и не использован как committed-доказательство"]
+- **Planning evidence paths:** ["docs/adr/0004-system-tests-cover-user-journeys.md", "openspec/changes/orchestrate-commit-preparation/adr.md", "openspec/changes/orchestrate-commit-preparation/design.md", "openspec/changes/orchestrate-commit-preparation/plan.md", "openspec/changes/orchestrate-commit-preparation/tasks.md"]
+- **Excluded worktree state:** ["openspec/changes/orchestrate-commit-preparation/implementation-review.md", "openspec/changes/orchestrate-commit-preparation/tasks.md"]
 
 ## Reviewed increment
 
-### U1 · Сквозное доказательство подготовки коммитов и восстановления
+### U1 · Послойные доказательства и конечный каталог production-сценариев
 
-- **Work items:** ["2.8 Доказать подготовку коммитов и восстановление через реальные границы процессов"]
-- **Requirements and scenarios:** ["commit-preparation: проверка среды и выбранного change", "commit-preparation: настройки агента и поставка промптов", "commit-preparation: одно ограниченное поручение подготовки коммитов", "commit-preparation: проверяемое завершение подготовки коммитов", "managed-paseo-sessions: восстановление видимой активной сессии", "managed-paseo-sessions: прямая отправка через Paseo CLI и граница восстановления", "managed-paseo-sessions: решения принимаются по актуальным источникам", "intervention-reporting: передача затруднения в текущую сессию"]
-- **Affected boundary:** Собранная production-команда и её взаимодействие через отдельные процессы с временным Git-репозиторием, OpenSpec CLI, Paseo CLI/локальным daemon и управляемым тестовым провайдером.
-- **Implementation target:** ["cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go", "docs/development/paseo-compatibility.md", "internal/paseo/integration_creation.go", "internal/paseo/settings.go", "internal/testpaseo/cmd/paseoproxy/main.go", "internal/testpaseo/cmd/reconcile/main.go", "internal/testpaseo/daemon.go", "internal/testpaseo/provider.go"]
-- **Applicable constraints and non-goals:** Linux и локальный daemon того же пользователя; взаимодействие с Paseo только через CLI и JSON; обычная production-сборка не содержит тестовый provider или тестовый unrestricted-режим; доставка уведомлений, длительное участие человека, изменение production-workflow и доказательство содержательной корректности коммитов исключены.
-- **Excluded change scope:** Будущие задачи 2.15–2.22 по углублению и миграции активного Paseo-контракта, а также задача 2.9 и Phase 3.
+- **Work items:** ["3.15 Вернуть технические варианты процессных проверок владеющим уровням", "3.16 Свести production-стенд к конечному каталогу пользовательских сценариев"]
+- **Requirements and scenarios:** ["design: доказательства принадлежат уровням, а системный стенд — пользовательским сценариям", "ADR 0004: системные тесты проверяют пользовательские сценарии"]
+- **Affected boundary:** Разработчик, запускающий обычные проверки, квалификацию внешнего контракта Paseo и production-каталог через реальные Git, OpenSpec CLI, локальный Paseo daemon и HTTP-приёмники.
+- **Implementation target:** ["cmd/openspec-apply-orchestrator/prepare_commits_delivery_integration_test.go", "cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go", "cmd/openspec-apply-orchestrator/prepare_commits_intervention_integration_test.go", "cmd/openspec-apply-orchestrator/prepare_commits_wait_integration_test.go", "docs/adr/README.md", "docs/development/paseo-compatibility.md", "docs/development/paseo-upgrade.md", "docs/development/testing.md", "internal/orchestrator/recovery_integration_test.go", "internal/paseo/recovery_integration_test.go", "internal/paseo/testpaseo/cmd/reconcile/main.go", "internal/paseo/testpaseo/daemon.go", "mise.toml"]
+- **Applicable constraints and non-goals:** Технические матрицы остаются у нижних уровней; настоящий daemon квалифицируется одним связным потоком; production-каталог содержит только целостные пользовательские истории, один раз собирает production-бинарник, изолирует изменяемые ресурсы, выполняется последовательно, ограничивает каждый путь deadline и гарантированно освобождает принадлежащие стенду процессы. Production-поведение не меняется.
+- **Excluded change scope:** Эксплуатационное руководство, ручная приёмка на пользовательском устройстве и итоговое подтверждение готовности задач 3.11–3.13.
+
+### U2 · Восстановление доставки ntfy в том же поручении
+
+- **Work items:** ["3.10 Доказать устойчивость ntfy одним пользовательским путём и послойными проверками (задача остаётся открытой)"]
+- **Requirements and scenarios:** ["commit-preparation-notifications: неуспешная доставка сохраняет снимок процесса, а отдельный перезапуск применяет новый снимок без дубликата успешного неизменного эпизода"]
+- **Affected boundary:** Пользователь, который после локально объяснённого сбоя доставки исправляет конфигурацию, перезапускает команду и продолжает то же поручение через уведомление той же собственной сессии.
+- **Implementation target:** ["cmd/openspec-apply-orchestrator/prepare_commits_delivery_integration_test.go"]
+- **Applicable constraints and non-goals:** Один сквозной путь подтверждает композицию production-процесса; матрицы ошибок конфигурации, HTTP, повторов и переходов состояния остаются у `internal/config`, `internal/notify` и `internal/orchestrator`; новый `run`, мутации Paseo, раскрытие приватных данных и повтор успешного неизменного эпизода запрещены.
+- **Excluded change scope:** Документирование эксплуатации и ручная проверка уведомления принадлежат задачам 3.11–3.12.
 
 ## Pass coverage
 
 | Pass | Status | Evidence or limitation |
 |---|---|---|
-| Independent decision review | Complete | Свежий изолированный reviewer проверил полный `3fc6f70d96a833a7cfd6d978134c8d9454016575..a143f1e96ac3572e86521286e5a338437ec6da1c` по семи назначенным Go-путям без planning-артефактов и прежних review-материалов. |
-| OpenSpec conformance | Complete | На чистом recorded head прошли `openspec validate orchestrate-commit-preparation --json`, `go test ./...`, `go test -race ./...` и точная команда задачи 2.8 `go test -p=1 -count=1 -tags=paseo_integration ./internal/paseo/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...`; completion claim задачи 2.8 сверена в обе стороны, а оставшаяся корректирующая работа принадлежит задачам 2.23–2.25. |
-| Code quality | Complete | По восьми delivery/test/documentation-путям проверены correctness, readability, architecture, security, performance и доказательства; прошли `go vet ./...`, обычная production-сборка, `gofmt -d`, `git diff --check`, Go workspace diagnostics и Go vulncheck. Дополнительных активных findings не подтверждено. |
+| Independent decision review | Complete | Свежий изолированный reviewer без planning-артефактов, истории и прежнего отчёта проверил delivery/test/documentation-реализацию полного `326f4bcbd636b40feae36069b913d79cbac9e141..07367033e9f135ee72c7201b6303dcbaa2c70a71`; отдельно учтены каталог пользовательских путей и устойчивость доставки после перезапуска. |
+| OpenSpec conformance | Complete | На recorded head прошли `go test -count=1 ./...`, целевой race-набор, `go vet ./...`, `go build ./cmd/openspec-apply-orchestrator`, `mise run test-paseo-scenarios`, отдельная квалификация `TestРеальныйPaseoКвалифицируетСозданиеИВосстановлениеСессии`, `openspec validate orchestrate-commit-preparation --strict --no-interactive --json`, проверка форматирования и `git diff --check`; состав из пяти последовательных `TestProductionПользователь...` сверён с задачами 3.10, 3.15 и 3.16. |
+| Code quality | Complete | Все reviewable delivery/test/documentation-пути и неизменённые границы планировщика доставки проверены по correctness, readability, architecture, security и performance; Go MCP не получил package metadata для файлов с build tag, поэтому их диагностику закрыли сборка, полный обычный набор и два фактических tagged-прогона. |
 
 ## Findings
 
-No unresolved findings remain in the implementation review.
+### F1 · Medium — Deadline и cleanup не владеют полным жизненным циклом сценария
+
+- **Evidence:** `startProductionScenario` запускает `testpaseo.StartIsolated` до создания трёхминутного context (`cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go:195-199`), а `StartIsolated` синхронно собирает два вспомогательных бинарника через `exec.Command` без deadline (`internal/paseo/testpaseo/daemon.go:113-161`, `:730-736`). Общая сборка production-бинарника также выполняется через `exec.Command` до `m.Run`, то есть до тестового alarm `-timeout` (`prepare_commits_integration_test.go:31-57`). После `Cmd.Start` процесс не регистрируется в cleanup, а `Cmd.Wait` выполняется только явным `process.wait` (`:216-262`); завершающие assertions между этими вызовами могут вызвать `t.Fatal`. `docs/development/testing.md:69-73` при этом обещает deadline и cleanup процессов каждой истории.
+- **Evidence revisions:** ["07367033e9f135ee72c7201b6303dcbaa2c70a71"]
+- **Impact:** Зависшая сборка или вспомогательная команда способна пережить оба заявленных ограничения времени, а ранний assertion после запуска production-команды отменит непосредственный процесс через context, но не гарантирует `Wait` и завершение его потомков до удаления ресурсов. Следующая последовательная история может получить процессы или ресурсы предыдущей.
+- **Required outcome:** Временная граница должна охватывать подготовку и весь пользовательский путь до первого внешнего процесса, а общий стенд должен гарантированно завершать и ожидать каждый принадлежащий ему процесс и его потомков до удаления ресурсов при успехе, ошибке, deadline и прерывании.
+- **Earliest source of truth:** task/verification
+- **Affected artifacts:** ["task 3.16", "cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go", "internal/paseo/testpaseo/daemon.go", "docs/development/testing.md"]
+
+### F2 · Medium — Тест подготовки объединяет две самостоятельные пользовательские истории
+
+- **Evidence:** `TestProductionПользовательПодготавливаетВсеИзмененияОднимПоручением` сначала запускает production-команду на чистом Git и полностью проверяет самостоятельный результат «работы нет» (`cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go:67-94`), затем меняет репозиторий и запускает вторую production-команду с отдельным результатом подготовки коммита (`:96-114`). `docs/development/testing.md:20` и `:80-93` требуют одного исходного положения, одного развития и одного пользовательского результата, а обычный `prepare_commits_test.go` уже владеет поведением чистого Git без агента.
+- **Evidence revisions:** ["07367033e9f135ee72c7201b6303dcbaa2c70a71"]
+- **Impact:** Именованный сценарий имеет два исходных положения, два запуска и два результата, дублирует нижний уровень и может падать из-за поведения, не относящегося к заявленной истории подготовки всех изменений.
+- **Required outcome:** Каждая запись production-каталога должна иметь одно исходное положение, один связный пользовательский путь и один результат; история подготовки коммитов должна проверять только подготовку имеющейся работы, а самостоятельный исход чистого Git оставаться у владеющего нижнего уровня.
+- **Earliest source of truth:** task/verification
+- **Affected artifacts:** ["task 3.16", "cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go", "docs/development/testing.md"]
+
+### F5 · Low — Каждый пользовательский сценарий заново собирает общие helper-бинарники
+
+- **Evidence:** Общий `TestMain` один раз собирает только production-бинарник (`cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go:31-57`). Каждый из пяти пользовательских тестов затем вызывает `startProductionScenario`, который создаёт `StartIsolated` (`:195-207`), а каждый такой запуск заново собирает неизменяемые `test-provider` и `paseoproxy` (`internal/paseo/testpaseo/daemon.go:113-161`, `:730-736`). Таким образом, один каталог выполняет десять одинаковых helper-сборок, хотя изоляция обеспечивается отдельными home, socket, workspace, configuration и журналами, а не байтами бинарников.
+- **Evidence revisions:** ["07367033e9f135ee72c7201b6303dcbaa2c70a71"]
+- **Impact:** Каталог расходует время и ресурсы на десять лишних компиляций, расширяет поверхность случайных сбоев подготовки и делает последовательную production-проверку заметно дороже без усиления изоляции или доказательства поведения.
+- **Required outcome:** Неизменяемые helper-бинарники должны подготавливаться один раз на каталог и безопасно переиспользоваться, сохраняя отдельные изменяемые ресурсы и cleanup каждого сценария.
+- **Earliest source of truth:** implementation/tests
+- **Affected artifacts:** ["task 3.16", "cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go", "internal/paseo/testpaseo/daemon.go"]
+
+### F3 · Low — Безопасный отказ не доказывает неизменность Git
+
+- **Evidence:** `TestProductionПользовательПолучаетБезопасныйОтказДоМутаций` после команды проверяет только ненулевую грязь через `git status`, отсутствие поручения и три вида Paseo-мутаций (`cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go:154-175`). Исходные HEAD, index, tracked-содержимое и untracked-набор не фиксируются и не сравниваются с состоянием после отказа.
+- **Evidence revisions:** ["07367033e9f135ee72c7201b6303dcbaa2c70a71"]
+- **Impact:** Частичный commit, добавление файла в index или изменение одного файла при сохранении другой незакоммиченной работы оставят `git status` непустым, поэтому сценарий останется зелёным вопреки заявленному безопасному отказу до мутаций.
+- **Required outcome:** Сквозной сценарий безопасного отказа должен доказывать, что production-команда не изменила HEAD, index, tracked-содержимое, untracked-набор и принадлежащие сценарию ресурсы Paseo до возврата ошибки конфигурации.
+- **Earliest source of truth:** task/verification
+- **Affected artifacts:** ["task 3.16", "cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go"]
 
 ## Review coverage
 
-Проверены все изменённые production/test пути unit U1, связанный command layer и существующие неизменённые проверки адаптера и восстановления. Planning- и ADR-пути использованы только координатором для conformance и mapping. Документ `docs/development/paseo-compatibility.md` учтён как verification-доказательство, а шесть ADR/OpenSpec-путей — как planning evidence. Все проверки выполнялись на `a143f1e96ac3572e86521286e5a338437ec6da1c`; локальный `origin/main` оставался на `3fc6f70d96a833a7cfd6d978134c8d9454016575`. Tagged Go-файлы не получили целевую metadata от Go MCP, но были скомпилированы и выполнены точным integration-набором; workspace diagnostics для обычной сборки замечаний не вернули.
+Проверены все 18 reviewable paths полного локального диапазона из десяти коммитов и неизменённые границы цикла наблюдения, дедупликации доставки и proxy-событий. Обычный набор, целевой race-набор, vet, build, строгая OpenSpec-валидация и точная квалификация реального Paseo прошли; production-каталог повторно выполнил пять историй последовательно за `389.729s`, после чего процессов `oa-paseo-*` и `oa-production-scenarios-*` не осталось. Успешный штатный прогон не закрывает F1 при раннем assertion или зависшем setup. Текущие правки отчёта и задачи 3.10 исключены из записанной Git-цели. Go MCP не получил package metadata для tagged-файлов, но альтернативные статические и фактические проверки этих файлов завершились успешно.

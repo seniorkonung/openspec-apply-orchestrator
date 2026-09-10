@@ -540,7 +540,7 @@ ADR 0004 уточняет стратегию доказательств посл
   - **Verification:**
     - `go test -count=1 ./internal/config/... ./internal/notify/... ./internal/orchestrator/... ./cmd/openspec-apply-orchestrator/...` для технических владельцев без тега `paseo_integration`.
     - `go test -p=1 -parallel=1 -count=1 -tags=paseo_integration -run '^TestProductionПользовательПослеСбояДоставкиПродолжаетТоЖеПоручение$' ./cmd/openspec-apply-orchestrator` для единственной сквозной истории задачи.
-    - Проверить HTTP-журнал, снимки двух процессов, журнал Paseo, отсутствие повторного `run`, дублирующей доставки и раскрытия токена, полного topic URL или содержимого поручения.
+    - Проверить HTTP-журнал, снимки двух процессов, журнал Paseo, отсутствие повторного `run`, дублирующей доставки и раскрытия токена, полного topic URL или содержимого поручения. Отсутствие дублирующей доставки проверяется после наблюдаемой границы завершённого post-success цикла: следующее наблюдение завершено, классифицировано, решение о доставке принято и сопровождение перешло к новой итерации. Одно событие начала `inspect` такой границей не является.
   - **Dependencies:** 3.16.
   - **Files likely touched:** `cmd/openspec-apply-orchestrator/prepare_commits_intervention_integration_test.go`, удаление `cmd/openspec-apply-orchestrator/prepare_commits_delivery_integration_test.go`, `internal/config/config_test.go`, `internal/notify/ntfy_test.go`, `internal/orchestrator/commit_preparation_intervention_test.go`.
   - **Estimated scope:** M.
