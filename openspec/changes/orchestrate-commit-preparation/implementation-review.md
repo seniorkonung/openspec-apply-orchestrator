@@ -3,9 +3,9 @@
 ## Assessment
 
 **Format version:** 1
-**Result:** Changes needed
+**Result:** No unresolved findings
 **Coverage status:** Complete
-**Summary:** Задача 3.16 не полностью подтверждена: helper-бинарники собираются повторно (F5), а безопасный отказ не доказывает неизменность Git (F3).
+**Summary:** Неразрешённых implementation-находок нет; оставшаяся коррекция сценария безопасного отказа имеет конкретного владельца в задаче 3.16.
 
 ## Review target
 
@@ -51,24 +51,8 @@
 
 ## Findings
 
-### F5 · Low — Каждый пользовательский сценарий заново собирает общие helper-бинарники
-
-- **Evidence:** Общий `TestMain` один раз собирает только production-бинарник (`cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go:31-57`). Каждый из пяти пользовательских тестов затем вызывает `startProductionScenario`, который создаёт `StartIsolated` (`:195-207`), а каждый такой запуск заново собирает неизменяемые `test-provider` и `paseoproxy` (`internal/paseo/testpaseo/daemon.go:113-161`, `:730-736`). Таким образом, один каталог выполняет десять одинаковых helper-сборок, хотя изоляция обеспечивается отдельными home, socket, workspace, configuration и журналами, а не байтами бинарников.
-- **Evidence revisions:** ["07367033e9f135ee72c7201b6303dcbaa2c70a71"]
-- **Impact:** Каталог расходует время и ресурсы на десять лишних компиляций, расширяет поверхность случайных сбоев подготовки и делает последовательную production-проверку заметно дороже без усиления изоляции или доказательства поведения.
-- **Required outcome:** Неизменяемые helper-бинарники должны подготавливаться один раз на каталог и безопасно переиспользоваться, сохраняя отдельные изменяемые ресурсы и cleanup каждого сценария.
-- **Earliest source of truth:** implementation/tests
-- **Affected artifacts:** ["task 3.16", "cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go", "internal/paseo/testpaseo/daemon.go"]
-
-### F3 · Low — Безопасный отказ не доказывает неизменность Git
-
-- **Evidence:** `TestProductionПользовательПолучаетБезопасныйОтказДоМутаций` после команды проверяет только ненулевую грязь через `git status`, отсутствие поручения и три вида Paseo-мутаций (`cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go:154-175`). Исходные HEAD, index, tracked-содержимое и untracked-набор не фиксируются и не сравниваются с состоянием после отказа.
-- **Evidence revisions:** ["07367033e9f135ee72c7201b6303dcbaa2c70a71"]
-- **Impact:** Частичный commit, добавление файла в index или изменение одного файла при сохранении другой незакоммиченной работы оставят `git status` непустым, поэтому сценарий останется зелёным вопреки заявленному безопасному отказу до мутаций.
-- **Required outcome:** Сквозной сценарий безопасного отказа должен доказывать, что production-команда не изменила HEAD, index, tracked-содержимое, untracked-набор и принадлежащие сценарию ресурсы Paseo до возврата ошибки конфигурации.
-- **Earliest source of truth:** task/verification
-- **Affected artifacts:** ["task 3.16", "cmd/openspec-apply-orchestrator/prepare_commits_integration_test.go"]
+No unresolved findings remain in the implementation review.
 
 ## Review coverage
 
-Проверены все 18 reviewable paths полного локального диапазона из десяти коммитов и неизменённые границы цикла наблюдения, дедупликации доставки и proxy-событий. Обычный набор, целевой race-набор, vet, build, строгая OpenSpec-валидация и точная квалификация реального Paseo прошли; production-каталог повторно выполнил пять историй последовательно за `389.729s`, после чего процессов `oa-paseo-*` и `oa-production-scenarios-*` не осталось. Текущие правки отчёта и задачи 3.10 исключены из записанной Git-цели. Go MCP не получил package metadata для tagged-файлов, но альтернативные статические и фактические проверки этих файлов завершились успешно.
+Проверены все 18 reviewable paths полного локального диапазона из десяти коммитов и неизменённые границы цикла наблюдения, дедупликации доставки и proxy-событий. Обычный набор, целевой race-набор, vet, build, строгая OpenSpec-валидация и точная квалификация реального Paseo прошли; production-каталог повторно выполнил пять историй последовательно за `389.729s`, после чего процессов `oa-paseo-*` и `oa-production-scenarios-*` не осталось. Текущие правки отчёта и `tasks.md` исключены из записанной Git-цели. Go MCP не получил package metadata для tagged-файлов, но альтернативные статические и фактические проверки этих файлов завершились успешно.
