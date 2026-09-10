@@ -28,17 +28,29 @@ var (
 
 type ChangeKey struct {
 	value string
+	name  string
 }
 
 func NewChangeKey(value string) (ChangeKey, error) {
+	return newChangeKey(value, value)
+}
+
+func newChangeKey(value, changeName string) (ChangeKey, error) {
 	if err := validateIdentifier("ключ change", value); err != nil {
 		return ChangeKey{}, err
 	}
-	return ChangeKey{value: value}, nil
+	if err := validateIdentifier("имя change", changeName); err != nil {
+		return ChangeKey{}, err
+	}
+	return ChangeKey{value: value, name: changeName}, nil
 }
 
 func (key ChangeKey) String() string {
 	return key.value
+}
+
+func (key ChangeKey) ChangeName() string {
+	return key.name
 }
 
 type WorkspaceID struct {

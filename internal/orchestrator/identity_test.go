@@ -53,6 +53,9 @@ func TestКлючПодготовкиКоммитовДетерминирова�
 	if strings.Contains(direct.String(), workingTree) || strings.Contains(direct.String(), planningHome) {
 		t.Fatalf("ключ раскрыл абсолютный путь: %q", direct.String())
 	}
+	if direct.ChangeName() != "orchestrate-commit-preparation" {
+		t.Fatalf("идентичность потеряла имя выбранного change: %q", direct.ChangeName())
+	}
 }
 
 func TestКаждыйПризнакМеняетКлючПодготовкиКоммитов(t *testing.T) {

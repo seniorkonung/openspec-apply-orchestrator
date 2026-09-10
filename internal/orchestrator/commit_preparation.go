@@ -521,7 +521,7 @@ func (reconciler *CommitPreparationReconciler) deliverIntervention(
 	if err != nil {
 		return deliveredEpisode, err
 	}
-	event, err := notify.NewIntervention(change.String(), reason, knownSession)
+	event, err := notify.NewIntervention(change.ChangeName(), reason, knownSession)
 	if err != nil {
 		return deliveredEpisode, fmt.Errorf(
 			"%w: построить событие потребности в человеке: %v",

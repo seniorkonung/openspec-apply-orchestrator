@@ -45,7 +45,10 @@ func NewCommitPreparationChangeKey(identity CommitPreparationIdentity) (ChangeKe
 	} {
 		writeIdentityValue(digest, value)
 	}
-	return NewChangeKey("change-v1-" + hex.EncodeToString(digest.Sum(nil)))
+	return newChangeKey(
+		"change-v1-"+hex.EncodeToString(digest.Sum(nil)),
+		identity.ChangeName,
+	)
 }
 
 func canonicalIdentityRoot(name, value string) (string, error) {
