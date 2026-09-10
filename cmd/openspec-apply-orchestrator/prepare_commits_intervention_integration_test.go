@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,43 +19,125 @@ import (
 	"github.com/seniorkonung/openspec-apply-orchestrator/internal/paseo/testpaseo"
 )
 
-func TestProductionПользовательПослеУведомленияПродолжаетТоЖеПоручение(t *testing.T) {
-	scenario := startProductionScenario(t)
-	harness := scenario.harness
-	harness.EnableCommandRecording(t)
-	prepareProductionRepository(t, scenario)
-	receiver := startIntegrationNtfyReceiver(t, scenario)
-	writeProductionConfigWithNotification(t, harness.Workspace(), receiver.URL(), "high")
-	makeProductionRepositoryDirty(t, scenario)
-	harness.SetBehavior(t, testpaseo.BehaviorWorking)
+const recoverableInterventionScenarioTimeout = 5 * time.Minute
 
-	process := startProductionCommand(t, scenario)
-	sessionID := waitForOnlyOwnSession(t, scenario, process)
-	waitForRecordedCommandEvent(t, scenario, testpaseo.CommandStarted, "wait")
-	harness.SetBehavior(t, testpaseo.BehaviorFinish)
-	request := receiver.WaitRequest(t)
-	if err := validateIntegrationNtfyRequest(request, expectedIntegrationNtfyRequest{
+func TestProductionПользовательПослеСбояДоставкиПродолжаетТоЖеПоручение(t *testing.T) {
+	scenario := startRecoverableInterventionScenario(t)
+	harness := scenario.harness
+	failing := startIntegrationNtfyReceiver(t, scenario.productionScenario, http.StatusServiceUnavailable)
+	recovered := startIntegrationNtfyReceiver(t, scenario.productionScenario, http.StatusOK)
+	const (
+		originalTokenEnvironment = "OA_INTEGRATION_NTFY_TOKEN_ORIGINAL_3_10"
+		originalToken            = "original-integration-token-3-10"
+		newTokenEnvironment      = "OA_INTEGRATION_NTFY_TOKEN_NEW_3_10"
+		newToken                 = "new-integration-token-3-10"
+		minimumRetryInterval     = 20 * time.Second
+	)
+	environment := []string{
+		originalTokenEnvironment + "=" + originalToken,
+		newTokenEnvironment + "=" + newToken,
+	}
+	originalRequest := expectedIntegrationNtfyRequest{
 		change:      productionIntegrationChange,
 		message:     "После хода агента в Git остались незакоммиченные изменения.",
-		sessionID:   sessionID,
-		sessionLink: integrationSessionLink(t, harness, sessionID),
+		sessionID:   scenario.sessionID,
+		sessionLink: integrationSessionLink(t, harness, scenario.sessionID),
 		priority:    config.NtfyPriorityHigh,
-	}); err != nil {
-		t.Fatalf("ntfy-запрос не соответствует контракту: %v\nзапрос: %#v", err, request)
 	}
+	writeInterventionConfigurationFixture(
+		t,
+		harness.Workspace(),
+		interventionConfigurationJSON(failing.URL(), originalTokenEnvironment, "high"),
+	)
+	harness.ResetCommandRecording(t)
+
+	firstProcess := startProductionCommandWithEnvironment(t, scenario.productionScenario, environment)
+	first := failing.WaitRequest(t)
+	if first.path != "/topic" {
+		t.Fatalf("первая попытка пришла на неожиданный путь %q", first.path)
+	}
+	if err := validateIntegrationNtfyRequest(first.notification, originalRequest); err != nil {
+		t.Fatalf("первая попытка доставки не соответствует снимку: %v", err)
+	}
+	if first.authorization != "Bearer "+originalToken {
+		t.Fatalf("первая попытка использовала неожиданный Authorization %q", first.authorization)
+	}
+
+	writeInterventionConfigurationFixture(
+		t,
+		harness.Workspace(),
+		interventionConfigurationJSON(recovered.URL(), newTokenEnvironment, "min"),
+	)
+	second := failing.WaitRequest(t)
+	if second.path != first.path {
+		t.Fatalf("повтор изменил путь доставки с %q на %q", first.path, second.path)
+	}
+	if err := validateIntegrationNtfyRequest(second.notification, originalRequest); err != nil {
+		t.Fatalf("повтор доставки изменил представление исходного снимка: %v", err)
+	}
+	if second.authorization != "Bearer "+originalToken {
+		t.Fatalf("повтор доставки подменил Authorization: %q", second.authorization)
+	}
+	if elapsed := second.observedAt.Sub(first.observedAt); elapsed < minimumRetryInterval {
+		t.Fatalf("повтор выполнен без ограничения частоты через %s", elapsed)
+	}
+	if first.notification != second.notification {
+		t.Fatalf("повтор изменил пользовательские поля: первая=%#v повтор=%#v", first, second)
+	}
+	recovered.AssertNoRequest(t)
+	waitForOutputCount(t, scenario.productionScenario, &firstProcess.output, "Уведомление не доставлено", 2)
+	firstProcess.interrupt(t)
+	firstResult := firstProcess.wait(t)
+	if firstResult.exitCode != 130 {
+		t.Fatalf("процесс с исходным снимком завершился с кодом %d вместо 130:\n%s", firstResult.exitCode, firstResult.output)
+	}
+	assertInterventionOutputIsSafe(
+		t,
+		firstResult.output,
+		failing.URL(),
+		recovered.URL(),
+		originalToken,
+		newToken,
+	)
+	assertNoPaseoMutations(t, harness.RecordedCommands(t))
+	assertOnlyOwnSession(t, harness, scenario.sessionID)
+
+	harness.ResetCommandRecording(t)
+	secondProcess := startProductionCommandWithEnvironment(t, scenario.productionScenario, environment)
+	afterRestart := recovered.WaitRequest(t)
+	if afterRestart.path != "/topic" {
+		t.Fatalf("доставка после перезапуска пришла на неожиданный путь %q", afterRestart.path)
+	}
+	newRequest := originalRequest
+	newRequest.priority = config.NtfyPriorityMin
+	if err := validateIntegrationNtfyRequest(afterRestart.notification, newRequest); err != nil {
+		t.Fatalf("новый снимок после перезапуска не применён: %v", err)
+	}
+	if afterRestart.authorization != "Bearer "+newToken {
+		t.Fatalf("новый процесс не применил новый Authorization: %q", afterRestart.authorization)
+	}
+	failing.AssertNoRequest(t)
+	waitForOutput(t, scenario.productionScenario, &secondProcess.output, "Уведомление доставлено")
+	assertOnlyOwnSession(t, harness, scenario.sessionID)
+	assertNoPaseoMutations(t, harness.RecordedCommands(t))
+	waitForCompletedPostSuccessObservation(t, scenario.productionScenario, &secondProcess.output)
 
 	const followUp = "Продолжить подготовку коммитов в той же сессии"
 	harness.SetBehavior(t, testpaseo.BehaviorAwaitRelease)
-	harness.RunCLI(t, "send", sessionID, followUp, "--no-wait", "--json")
-	waitForRecordedCommandEventCount(t, scenario, testpaseo.CommandStarted, "wait", 2)
-	if err := validateInterventionContinuationEvents(harness.RecordedCommandEvents(t), sessionID); err != nil {
+	harness.RunCLI(t, "send", scenario.sessionID, followUp, "--no-wait", "--json")
+	waitForRecordedCommandEventCount(t, scenario.productionScenario, testpaseo.CommandStarted, "wait", 1)
+	recovered.AssertNoRequest(t)
+	if err := validateRecoveredInterventionContinuationEvents(
+		harness.RecordedCommandEvents(t),
+		scenario.sessionID,
+	); err != nil {
 		t.Fatalf("переход от idle к продолжению нарушен: %v\nсобытия: %#v", err, harness.RecordedCommandEvents(t))
 	}
 
-	runTool(t, scenario, harness.Workspace(), "git", "add", "--all")
+	runTool(t, scenario.productionScenario, harness.Workspace(), "git", "add", "--all")
 	runTool(
 		t,
-		scenario,
+		scenario.productionScenario,
 		harness.Workspace(),
 		"git",
 		"-c", "user.name=OpenSpec Apply Integration",
@@ -62,18 +145,26 @@ func TestProductionПользовательПослеУведомленияПр�
 		"commit", "-m", "test: complete continued intervention",
 	)
 	harness.ReleasePrompt(t)
-	waitForRecordedCommandEventCount(t, scenario, testpaseo.CommandFinished, "wait", 2)
-	harness.RunCLI(t, "archive", sessionID, "--json")
-	result := process.wait(t)
+	waitForRecordedCommandEventCount(t, scenario.productionScenario, testpaseo.CommandFinished, "wait", 1)
+	harness.RunCLI(t, "archive", scenario.sessionID, "--json")
+	result := secondProcess.wait(t)
 	if result.exitCode != exitSuccess {
 		t.Fatalf("продолженная production-команда завершилась с кодом %d:\n%s", result.exitCode, result.output)
 	}
-	if status := gitOutput(t, scenario, "status", "--porcelain=v1"); status != "" {
+	if status := gitOutput(t, scenario.productionScenario, "status", "--porcelain=v1"); status != "" {
 		t.Fatalf("после продолжения Git остался изменённым:\n%s", status)
 	}
-	assertSessionArchived(t, harness, sessionID)
-	assertCommandCount(t, harness.RecordedCommands(t), "run", 1)
-	receiver.AssertNoRequest(t)
+	assertSessionArchived(t, harness, scenario.sessionID)
+	assertCommandCount(t, harness.RecordedCommands(t), "run", 0)
+	recovered.AssertNoRequest(t)
+	assertInterventionOutputIsSafe(
+		t,
+		result.output,
+		failing.URL(),
+		recovered.URL(),
+		originalToken,
+		newToken,
+	)
 
 	prompts := harness.Prompts(t)
 	if len(prompts) != 2 || strings.TrimSpace(prompts[1]) != followUp {
@@ -92,54 +183,70 @@ type capturedIntegrationNtfyRequest struct {
 	body          string
 }
 
+type capturedIntegrationDelivery struct {
+	notification  capturedIntegrationNtfyRequest
+	authorization string
+	path          string
+	observedAt    time.Time
+}
+
 type integrationNtfyReceiver struct {
 	context  context.Context
 	server   *httptest.Server
-	requests chan capturedIntegrationNtfyRequest
+	requests chan capturedIntegrationDelivery
 }
 
-func startIntegrationNtfyReceiver(t *testing.T, scenario *productionScenario) *integrationNtfyReceiver {
+func startIntegrationNtfyReceiver(
+	t *testing.T,
+	scenario *productionScenario,
+	status int,
+) *integrationNtfyReceiver {
 	t.Helper()
 	receiver := &integrationNtfyReceiver{
 		context:  scenario.context,
-		requests: make(chan capturedIntegrationNtfyRequest, 4),
+		requests: make(chan capturedIntegrationDelivery, 16),
 	}
 	receiver.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		body, err := io.ReadAll(request.Body)
 		if err != nil {
 			t.Errorf("прочитать тело сквозного ntfy-запроса: %v", err)
 		}
-		receiver.requests <- capturedIntegrationNtfyRequest{
-			method:        request.Method,
-			title:         request.Header.Get("Title"),
-			actions:       request.Header.Get("Actions"),
-			actionHeaders: len(request.Header.Values("Actions")),
-			click:         request.Header.Get("Click"),
-			clickHeaders:  len(request.Header.Values("Click")),
-			priority:      request.Header.Get("Priority"),
-			body:          string(body),
+		receiver.requests <- capturedIntegrationDelivery{
+			notification: capturedIntegrationNtfyRequest{
+				method:        request.Method,
+				title:         request.Header.Get("Title"),
+				actions:       request.Header.Get("Actions"),
+				actionHeaders: len(request.Header.Values("Actions")),
+				click:         request.Header.Get("Click"),
+				clickHeaders:  len(request.Header.Values("Click")),
+				priority:      request.Header.Get("Priority"),
+				body:          string(body),
+			},
+			authorization: request.Header.Get("Authorization"),
+			path:          request.URL.Path,
+			observedAt:    time.Now(),
 		}
-		writer.WriteHeader(http.StatusOK)
+		writer.WriteHeader(status)
 	}))
 	t.Cleanup(receiver.server.Close)
 	return receiver
 }
 
 func (receiver *integrationNtfyReceiver) URL() string {
-	return receiver.server.URL + "/integration-topic"
+	return receiver.server.URL + "/topic"
 }
 
-func (receiver *integrationNtfyReceiver) WaitRequest(t *testing.T) capturedIntegrationNtfyRequest {
+func (receiver *integrationNtfyReceiver) WaitRequest(t *testing.T) capturedIntegrationDelivery {
 	t.Helper()
 	select {
 	case request := <-receiver.requests:
 		return request
 	case <-receiver.context.Done():
 		t.Fatalf("истёк deadline пользовательского сценария: %v", receiver.context.Err())
-		return capturedIntegrationNtfyRequest{}
+		return capturedIntegrationDelivery{}
 	case <-time.After(productionIntegrationEventTimeout):
 		t.Fatal("не дождаться сквозного ntfy-запроса")
-		return capturedIntegrationNtfyRequest{}
+		return capturedIntegrationDelivery{}
 	}
 }
 
@@ -147,7 +254,7 @@ func (receiver *integrationNtfyReceiver) AssertNoRequest(t *testing.T) {
 	t.Helper()
 	select {
 	case request := <-receiver.requests:
-		t.Fatalf("запуск агента неожиданно вызвал ntfy-запрос: %#v", request)
+		t.Fatalf("обнаружен неожиданный ntfy-запрос: %#v", request)
 	default:
 	}
 }
@@ -206,29 +313,153 @@ func integrationSessionLink(t *testing.T, harness *testpaseo.Harness, sessionID 
 	return "paseo://h/" + observation.ServerID + "/agent/" + sessionID
 }
 
-func writeProductionConfigWithNotification(t *testing.T, root, address, priority string) {
-	t.Helper()
+func interventionConfigurationJSON(address, tokenEnvironment, priority string) string {
+	tokenField := ""
+	if tokenEnvironment != "" {
+		tokenField = fmt.Sprintf(",\"tokenEnv\":%q", tokenEnvironment)
+	}
 	priorityField := ""
 	if priority != "" {
-		priorityField = fmt.Sprintf(",\n      \"priority\": %q", priority)
+		priorityField = fmt.Sprintf(",\"priority\":%q", priority)
 	}
-	content := fmt.Sprintf(`{
-  "version": 1,
-  "sessions": {
-    "commit-preparation": {
-      "provider": %q,
-      "model": %q
-    }
-  },
-  "notifications": {
-    "intervention": {
-      "type": "ntfy",
-      "url": %q%s
-    }
-  }
+	return fmt.Sprintf(
+		`{"version":1,"sessions":{"commit-preparation":{"provider":%q,"model":%q}},"notifications":{"intervention":{"type":"ntfy","url":%q%s%s}}}`,
+		testpaseo.ProviderID,
+		testpaseo.ModelID,
+		address,
+		tokenField,
+		priorityField,
+	)
 }
-`, testpaseo.ProviderID, testpaseo.ModelID, address, priorityField)
+
+func writeInterventionConfigurationFixture(t *testing.T, root, content string) {
+	t.Helper()
 	writeIntegrationFile(t, filepath.Join(root, config.FileName), content)
+}
+
+func startProductionCommandWithEnvironment(
+	t *testing.T,
+	scenario *productionScenario,
+	environment []string,
+) *productionCommandProcess {
+	t.Helper()
+	command := exec.Command(
+		scenario.binary,
+		"prepare-commits",
+		"--change",
+		productionIntegrationChange,
+		"--verbose",
+	)
+	command.Dir = scenario.harness.Workspace()
+	command.Env = replaceProcessEnvironment(scenario.harness.Environment(), environment)
+	process := &productionCommandProcess{context: scenario.context}
+	command.Stdout = &process.output
+	command.Stderr = &process.output
+	owned, err := testpaseo.StartOwnedProcess(command)
+	if err != nil {
+		t.Fatalf("запустить production-команду с окружением доставки: %v", err)
+	}
+	process.process = owned
+	t.Cleanup(func() { process.cleanup(t) })
+	return process
+}
+
+func replaceProcessEnvironment(base, replacements []string) []string {
+	keys := make(map[string]struct{}, len(replacements))
+	for _, replacement := range replacements {
+		key, _, _ := strings.Cut(replacement, "=")
+		keys[key] = struct{}{}
+	}
+	result := make([]string, 0, len(base)+len(replacements))
+	for _, entry := range base {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, replaced := keys[key]; !replaced {
+			result = append(result, entry)
+		}
+	}
+	return append(result, replacements...)
+}
+
+type recoverableInterventionScenario struct {
+	*productionScenario
+	sessionID string
+}
+
+func startRecoverableInterventionScenario(t *testing.T) recoverableInterventionScenario {
+	t.Helper()
+	scenario := startProductionScenarioWithTimeout(t, recoverableInterventionScenarioTimeout)
+	harness := scenario.harness
+	harness.EnableCommandRecording(t)
+	prepareProductionRepository(t, scenario)
+	makeProductionRepositoryDirty(t, scenario)
+	harness.SetBehavior(t, testpaseo.BehaviorWorking)
+
+	process := startProductionCommand(t, scenario)
+	sessionID := waitForOnlyOwnSession(t, scenario, process)
+	waitForRecordedCommandEvent(t, scenario, testpaseo.CommandStarted, "wait")
+	process.interrupt(t)
+	if result := process.wait(t); result.exitCode != 130 {
+		t.Fatalf("исходный процесс завершился с кодом %d вместо 130:\n%s", result.exitCode, result.output)
+	}
+
+	harness.SetBehavior(t, testpaseo.BehaviorFinish)
+	harness.ResetCommandRecording(t)
+	return recoverableInterventionScenario{productionScenario: scenario, sessionID: sessionID}
+}
+
+func waitForOutputCount(
+	t *testing.T,
+	scenario *productionScenario,
+	output *synchronizedBuffer,
+	fragment string,
+	want int,
+) {
+	t.Helper()
+	deadline := productionEventDeadline(t, scenario)
+	for time.Now().Before(deadline) {
+		if strings.Count(output.String(), fragment) >= want {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	assertProductionScenarioActive(t, scenario)
+	t.Fatalf(
+		"не дождаться %d вхождений %q в выводе:\n%s",
+		want,
+		fragment,
+		output.String(),
+	)
+}
+
+func assertInterventionOutputIsSafe(t *testing.T, output string, private ...string) {
+	t.Helper()
+	private = append(private, strings.TrimSpace(promptsPackageText()))
+	for _, value := range private {
+		if value != "" && strings.Contains(output, value) {
+			t.Fatalf("вывод доставки раскрыл приватные данные %q:\n%s", value, output)
+		}
+	}
+}
+
+func waitForCompletedPostSuccessObservation(
+	t *testing.T,
+	scenario *productionScenario,
+	output *synchronizedBuffer,
+) {
+	t.Helper()
+	events := scenario.harness.RecordedCommandEvents(t)
+	completedInspections := countCommandEvents(events, testpaseo.CommandFinished, "inspect")
+	const gitRead = "Подробно: состояние Git прочитано."
+	completedGitReads := strings.Count(output.String(), gitRead)
+
+	waitForRecordedCommandEventCount(
+		t,
+		scenario,
+		testpaseo.CommandFinished,
+		"inspect",
+		completedInspections+1,
+	)
+	waitForOutputCount(t, scenario, output, gitRead, completedGitReads+1)
 }
 
 func waitForRecordedCommandEventCount(
@@ -265,53 +496,34 @@ func countCommandEvents(events []testpaseo.CommandEvent, phase testpaseo.Command
 	return count
 }
 
-func validateInterventionContinuationEvents(events []testpaseo.CommandEvent, sessionID string) error {
-	firstWait := commandEventIndex(events, testpaseo.CommandStarted, "wait", 0)
-	firstFinish := commandEventIndex(events, testpaseo.CommandFinished, "wait", firstWait+1)
-	secondWait := commandEventIndex(events, testpaseo.CommandStarted, "wait", firstFinish+1)
-	if firstWait < 0 || firstFinish < 0 || secondWait < 0 {
-		return fmt.Errorf("не зафиксированы завершение первого и начало второго wait")
+func validateRecoveredInterventionContinuationEvents(
+	events []testpaseo.CommandEvent,
+	sessionID string,
+) error {
+	wait := commandEventIndex(events, testpaseo.CommandStarted, "wait", 0)
+	if wait < 0 {
+		return fmt.Errorf("не зафиксировано начало wait после продолжения")
 	}
-	if !containsArgument(events[firstWait].Arguments, sessionID) ||
-		!containsArgument(events[firstFinish].Arguments, sessionID) ||
-		!containsArgument(events[secondWait].Arguments, sessionID) {
-		return fmt.Errorf("wait относится не к одной сессии %s", sessionID)
+	if countCommandEvents(events, testpaseo.CommandStarted, "wait") != 1 {
+		return fmt.Errorf("ожидался ровно один запуск wait после продолжения")
 	}
-	if countCommandEvents(events, testpaseo.CommandStarted, "wait") != 2 {
-		return fmt.Errorf("ожидалось ровно два запуска wait")
+	if !containsArgument(events[wait].Arguments, sessionID) {
+		return fmt.Errorf("wait относится не к восстановленной сессии %s", sessionID)
 	}
 
-	observations := make([][]string, 0, 8)
-	for _, event := range events[firstFinish+1 : secondWait] {
-		if event.Phase != testpaseo.CommandStarted {
-			continue
+	completedInspection := false
+	for index, event := range events[:wait] {
+		if event.Phase == testpaseo.CommandStarted && hasCommandPrefix(event.Arguments, "run") {
+			return fmt.Errorf("до продолжения создано новое поручение в событии %d", index)
 		}
-		if hasCommandPrefix(event.Arguments, "workspace", "ls") ||
-			hasCommandPrefix(event.Arguments, "ls") ||
-			hasCommandPrefix(event.Arguments, "inspect") {
-			observations = append(observations, event.Arguments)
-		}
-	}
-	want := [][]string{
-		{"workspace", "ls"}, {"ls"}, {"ls"}, {"inspect"},
-		{"workspace", "ls"}, {"ls"}, {"ls"}, {"inspect"},
-	}
-	if len(observations) != len(want) {
-		return fmt.Errorf("ожидалось два ограниченных наблюдения, получено %#v", observations)
-	}
-	for index := range want {
-		if !hasCommandPrefix(observations[index], want[index]...) {
-			return fmt.Errorf("наблюдение %d ожидало %q, получено %#v", index+1, want[index], observations[index])
+		if event.Phase == testpaseo.CommandFinished &&
+			hasCommandPrefix(event.Arguments, "inspect") &&
+			containsArgument(event.Arguments, sessionID) {
+			completedInspection = true
 		}
 	}
-	if argumentCount(observations[1], "--label") != 2 ||
-		argumentCount(observations[2], "--label") != 5 ||
-		argumentCount(observations[5], "--label") != 2 ||
-		argumentCount(observations[6], "--label") != 5 {
-		return fmt.Errorf("ожидались широкий и точный фильтры каждой пары ls")
-	}
-	if !containsArgument(observations[3], sessionID) || !containsArgument(observations[7], sessionID) {
-		return fmt.Errorf("inspect относится не к сессии %s", sessionID)
+	if !completedInspection {
+		return fmt.Errorf("до продолжения не завершено наблюдение восстановленной сессии %s", sessionID)
 	}
 	return nil
 }

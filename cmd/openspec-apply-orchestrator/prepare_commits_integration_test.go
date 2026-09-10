@@ -238,8 +238,12 @@ type productionCommandProcess struct {
 }
 
 func startProductionScenario(t *testing.T) *productionScenario {
+	return startProductionScenarioWithTimeout(t, productionIntegrationScenarioTimeout)
+}
+
+func startProductionScenarioWithTimeout(t *testing.T, timeout time.Duration) *productionScenario {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), productionIntegrationScenarioTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	t.Cleanup(cancel)
 	if productionIntegrationBinary == "" {
 		t.Fatal("production-бинарник не собран общим стендом")
