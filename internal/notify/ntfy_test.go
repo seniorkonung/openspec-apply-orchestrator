@@ -48,7 +48,10 @@ func TestNtfyДоставляетОсмысленноеПредставлени�
 				requests <- capturedNtfyRequest{
 					method:        request.Method,
 					title:         request.Header.Get("Title"),
+					actions:       request.Header.Get("Actions"),
+					actionHeaders: len(request.Header.Values("Actions")),
 					click:         request.Header.Get("Click"),
+					clickHeaders:  len(request.Header.Values("Click")),
 					priority:      request.Header.Get("Priority"),
 					authorization: request.Header.Get("Authorization"),
 					contentType:   request.Header.Get("Content-Type"),
@@ -76,8 +79,12 @@ func TestNtfyДоставляетОсмысленноеПредставлени�
 			if request.title != "Подготовка коммитов: "+event.Change() {
 				t.Errorf("неожиданный Title: %q", request.title)
 			}
-			if request.click != event.SessionLink().String() {
-				t.Errorf("заголовок Click не содержит ссылку сессии: %q", request.click)
+			wantAction := "view, Открыть сессию, " + event.SessionLink().String() + ", clear=true"
+			if request.actions != wantAction || request.actionHeaders != 1 {
+				t.Errorf("ожидался один точный Actions, получено %d: %q", request.actionHeaders, request.actions)
+			}
+			if request.click != "" || request.clickHeaders != 0 {
+				t.Errorf("верхнеуровневый Click не должен передаваться, получено %d: %q", request.clickHeaders, request.click)
 			}
 			if request.priority != string(config.NtfyPriorityDefault) {
 				t.Errorf("неожиданный Priority: %q", request.priority)
@@ -149,10 +156,13 @@ func TestNtfyПовторяетТоЖеПредставлениеИПриори�
 			t.Errorf("прочитать тело повторного ntfy-запроса: %v", err)
 		}
 		requests <- capturedNtfyRequest{
-			title:    request.Header.Get("Title"),
-			click:    request.Header.Get("Click"),
-			priority: request.Header.Get("Priority"),
-			body:     string(body),
+			title:         request.Header.Get("Title"),
+			actions:       request.Header.Get("Actions"),
+			actionHeaders: len(request.Header.Values("Actions")),
+			click:         request.Header.Get("Click"),
+			clickHeaders:  len(request.Header.Values("Click")),
+			priority:      request.Header.Get("Priority"),
+			body:          string(body),
 		}
 		writer.WriteHeader(http.StatusOK)
 	}))
@@ -176,6 +186,16 @@ func TestNtfyПовторяетТоЖеПредставлениеИПриори�
 	}
 	if first.priority != string(config.NtfyPriorityHigh) {
 		t.Fatalf("повтор не сохранил выбранный приоритет: %q", first.priority)
+	}
+	wantAction := "view, Открыть сессию, " + event.SessionLink().String() + ", clear=true"
+	if first.actions != wantAction || first.actionHeaders != 1 || first.click != "" || first.clickHeaders != 0 {
+		t.Fatalf(
+			"повтор не сохранил единственное очищающее действие: actions=%d:%q click=%d:%q",
+			first.actionHeaders,
+			first.actions,
+			first.clickHeaders,
+			first.click,
+		)
 	}
 }
 
@@ -542,7 +562,10 @@ func newTestNtfy(
 type capturedNtfyRequest struct {
 	method        string
 	title         string
+	actions       string
+	actionHeaders int
 	click         string
+	clickHeaders  int
 	priority      string
 	authorization string
 	contentType   string

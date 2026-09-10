@@ -95,7 +95,7 @@ func (deliverer *ntfyDeliverer) Deliver(ctx context.Context, event Intervention)
 	}
 	request.Header.Set("Content-Type", "text/plain; charset=utf-8")
 	request.Header.Set("Title", "Подготовка коммитов: "+event.Change())
-	request.Header.Set("Click", event.SessionLink().String())
+	request.Header.Set("Actions", "view, Открыть сессию, "+event.SessionLink().String()+", clear=true")
 	request.Header.Set("Priority", string(deliverer.priority))
 	if deliverer.hasToken {
 		request.Header.Set("Authorization", "Bearer "+token)

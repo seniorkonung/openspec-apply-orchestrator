@@ -524,6 +524,24 @@ func TestСнимокСохраняетТипизированныеОшибки�
 			expected: ErrUnknownField,
 			path:     "notifications.intervention.token",
 		},
+		{
+			name:     "очистка не настраивается пользователем",
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic","clear":false}}}`,
+			expected: ErrUnknownField,
+			path:     "notifications.intervention.clear",
+		},
+		{
+			name:     "действия не настраиваются пользователем",
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic","actions":[]}}}`,
+			expected: ErrUnknownField,
+			path:     "notifications.intervention.actions",
+		},
+		{
+			name:     "заголовки не настраиваются пользователем",
+			json:     `{"version":1,"sessions":{"commit-preparation":{"provider":"codex","model":"gpt-6"}},"notifications":{"intervention":{"type":"ntfy","url":"https://ntfy.example.invalid/topic","headers":{}}}}`,
+			expected: ErrUnknownField,
+			path:     "notifications.intervention.headers",
+		},
 	}
 
 	for _, tt := range tests {
